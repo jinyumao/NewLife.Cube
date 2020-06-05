@@ -13,10 +13,12 @@ namespace NewLife.Cube
     /// <summary>分页模型绑定器</summary>
     public class PagerModelBinder : IModelBinder
     {
-
         private readonly IDictionary<ModelMetadata, IModelBinder> _propertyBinders;
         private readonly ILoggerFactory _loggerFactory;
 
+        /// <summary>实例化分页模型绑定器</summary>
+        /// <param name="propertyBinders"></param>
+        /// <param name="loggerFactory"></param>
         public PagerModelBinder(IDictionary<ModelMetadata, IModelBinder> propertyBinders, ILoggerFactory loggerFactory)
         {
             _propertyBinders = propertyBinders ?? throw new ArgumentNullException(nameof(propertyBinders));
@@ -45,6 +47,8 @@ namespace NewLife.Cube
 
                 bindingContext.Result = ModelBindingResult.Success(pager);
             }
+
+            //return Task.CompletedTask;
         }
     }
 

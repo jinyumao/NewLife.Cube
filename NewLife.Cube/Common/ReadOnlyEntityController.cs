@@ -1,23 +1,28 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Web;
+using System.Xml.Serialization;
 using NewLife.Common;
 using NewLife.Cube.Entity;
+using NewLife.Cube.Extensions;
+using NewLife.Data;
+using NewLife.IO;
+using NewLife.Log;
 using NewLife.Serialization;
 using NewLife.Web;
 using NewLife.Xml;
 using XCode;
 using XCode.Configuration;
 using XCode.Membership;
-using NewLife.IO;
-using System.IO;
-using System.Xml.Serialization;
-using System.IO.Compression;
-using NewLife.Log;
+using XCode.Model;
+using NewLife.Security;
+
 #if __CORE__
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -25,7 +30,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Net.Http.Headers;
-using NewLife.Cube.Extensions;
 #else
 using System.Web.Mvc;
 #endif
@@ -38,7 +42,7 @@ namespace NewLife.Cube
     {
         #region 属性
         /// <summary>实体工厂</summary>
-        public static IEntityOperate Factory => Entity<TEntity>.Meta.Factory;
+        public static IEntityFactory Factory => Entity<TEntity>.Meta.Factory;
 
         private String CacheKey => $"CubeView_{typeof(TEntity).FullName}";
         #endregion
@@ -51,11 +55,7 @@ namespace NewLife.Cube
         }
 
         /// <summary>构造函数</summary>
-        public ReadOnlyEntityController()
-        {
-            var title = Entity<TEntity>.Meta.Table.DataTable.DisplayName + "管理";
-            ViewBag.Title = title;
-        }
+        public ReadOnlyEntityController() { }
 
         /// <summary>动作执行前</summary>
         /// <param name="filterContext"></param>
@@ -65,6 +65,9 @@ namespace NewLife.Cube
         protected override void OnActionExecuting(ActionExecutingContext filterContext)
 #endif
         {
+            var title = GetType().GetDisplayName() ?? typeof(TEntity).GetDisplayName() ?? Entity<TEntity>.Meta.Table.DataTable.DisplayName;
+            ViewBag.Title = title;
+
             // Ajax请求不需要设置ViewBag
             if (!Request.IsAjaxRequest())
             {
@@ -88,6 +91,7 @@ namespace NewLife.Cube
 
                 var txt = (String)ViewBag.HeaderContent;
                 if (txt.IsNullOrEmpty()) txt = (ViewBag.Menu as IMenu)?.Remark;
+                if (txt.IsNullOrEmpty()) txt = (HttpContext.Items["CurrentMenu"] as IMenu)?.Remark;
                 if (txt.IsNullOrEmpty()) txt = GetType().GetDescription();
                 if (txt.IsNullOrEmpty()) txt = Entity<TEntity>.Meta.Table.Description;
                 //if (txt.IsNullOrEmpty() && SysConfig.Current.Develop)
@@ -129,7 +133,7 @@ namespace NewLife.Cube
                 // Json输出
                 if (IsJsonRequest)
                 {
-                    filterContext.Result = JsonError(ex);
+                    filterContext.Result = Json(0, null, ex);
                     filterContext.ExceptionHandled = true;
                 }
                 //else if (ex is NoPermissionException nex)
@@ -150,10 +154,27 @@ namespace NewLife.Cube
         /// <returns></returns>
         protected virtual IEnumerable<TEntity> Search(Pager p)
         {
-            // 缓存数据，用于后续导出
-            SetSession(CacheKey, p);
-
             return Entity<TEntity>.Search(p["dtStart"].ToDateTime(), p["dtEnd"].ToDateTime(), p["Q"], p);
+        }
+
+        /// <summary>搜索数据，支持数据权限</summary>
+        /// <param name="p"></param>
+        /// <returns></returns>
+        protected IEnumerable<TEntity> SearchData(Pager p)
+        {
+            // 缓存数据，用于后续导出
+            //SetSession(CacheKey, p);
+            //Session[CacheKey] = p;
+
+            // 数据权限
+            var builder = CreateWhere();
+            if (builder != null)
+            {
+                if (builder.Data2 == null) builder.Data2 = p;
+                p.State = builder;
+            }
+
+            return Search(p);
         }
 
         /// <summary>查找单行数据</summary>
@@ -182,6 +203,53 @@ namespace NewLife.Cube
             return Entity<TEntity>.FindByKeyForEdit(key);
         }
 
+        /// <summary>查找单行数据，并判断数据权限</summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        protected TEntity FindData(Object key)
+        {
+            // 先查出来，再判断数据权限
+            var entity = Find(key);
+            if (entity != null)
+            {
+                // 数据权限
+                var builder = CreateWhere();
+                if (builder != null && !builder.Eval(entity)) throw new InvalidOperationException($"非法访问数据[{key}]");
+            }
+
+            return entity;
+        }
+
+        /// <summary>创建查询条件构造器，主要用于数据权限</summary>
+        /// <returns></returns>
+        protected virtual WhereBuilder CreateWhere()
+        {
+            var att = GetType().GetCustomAttribute<DataPermissionAttribute>();
+            if (att == null) return null;
+
+            // 已登录用户判断系统角色，未登录时不判断
+            var user = HttpContext.Items["CurrentUser"] as IUser;
+            if (user == null) user = ManageProvider.User;
+            if (user != null && (user.Roles.Any(e => e.IsSystem) || att.Valid(user.Roles))) return null;
+
+            var builder = new WhereBuilder
+            {
+                Factory = Factory,
+                Expression = att.Expression,
+#if __CORE__
+                //Data = Session,
+#endif
+            };
+#if __CORE__
+            builder.SetData(Session);
+#else
+            builder.Data = new SessionExtend { Session = Session };
+#endif
+            builder.Data2 = new ItemsExtend { Items = HttpContext.Items };
+
+            return builder;
+        }
+
         /// <summary>获取选中键</summary>
         /// <returns></returns>
         protected virtual String[] SelectKeys => GetRequest("Keys").Split(",");
@@ -191,13 +259,14 @@ namespace NewLife.Cube
         protected virtual IEnumerable<TEntity> ExportData(Int32 max = 10_000_000)
         {
             // 计算目标数据量
-            var p = new Pager(GetSession<Pager>(CacheKey))
+            var p = Session[CacheKey] as Pager;
+            p = new Pager(p)
             {
                 RetrieveTotalCount = true,
                 PageIndex = 1,
                 PageSize = 1,
             };
-            Search(p);
+            SearchData(p);
             p.PageSize = 20_000;
 
             //!!! 数据量很大，且有时间条件时，采用时间分片导出。否则统一分页导出
@@ -233,7 +302,8 @@ namespace NewLife.Cube
         protected virtual IEnumerable<TEntity> ExportDataByPage(Int32 pageSize, Int32 max)
         {
             // 跳过头部一些页数，导出当前页以及以后的数据
-            var p = new Pager(GetSession<Pager>(CacheKey))
+            var p = Session[CacheKey] as Pager;
+            p = new Pager(p)
             {
                 // 不要查记录数
                 RetrieveTotalCount = false
@@ -246,13 +316,13 @@ namespace NewLife.Cube
             while (max > 0)
             {
 #if __CORE__
-                if (!HttpContext.RequestAborted.IsCancellationRequested) yield break;
+                if (HttpContext.RequestAborted.IsCancellationRequested) yield break;
 #else
                 if (!rs.IsClientConnected) yield break;
 #endif
                 if (p.PageSize > max) p.PageSize = max;
 
-                var list = Search(p);
+                var list = SearchData(p);
 
                 var count = list.Count();
                 if (count == 0) break;
@@ -279,7 +349,8 @@ namespace NewLife.Cube
         protected virtual IEnumerable<TEntity> ExportDataByDatetime(Int32 step, Int32 max)
         {
             // 跳过头部一些页数，导出当前页以及以后的数据
-            var p = new Pager(GetSession<Pager>(CacheKey))
+            var p = Session[CacheKey] as Pager;
+            p = new Pager(p)
             {
                 // 不要查记录数
                 RetrieveTotalCount = false,
@@ -299,7 +370,7 @@ namespace NewLife.Cube
             while (max > 0 && dt < end)
             {
 #if __CORE__
-                if (!HttpContext.RequestAborted.IsCancellationRequested) yield break;
+                if (HttpContext.RequestAborted.IsCancellationRequested) yield break;
 #else
                 if (!rs.IsClientConnected) yield break;
 #endif
@@ -310,7 +381,7 @@ namespace NewLife.Cube
                 p["dtStart"] = dt.ToFullString();
                 p["dtEnd"] = dt2.ToFullString();
 
-                var list = Search(p);
+                var list = SearchData(p);
 
                 var count = list.Count();
                 //if (count == 0) break;
@@ -339,7 +410,8 @@ namespace NewLife.Cube
             if (p == null) p = ViewBag.Page as Pager;
 
             // 缓存数据，用于后续导出
-            SetSession(CacheKey, p);
+            //SetSession(CacheKey, p);
+            Session[CacheKey] = p;
 
             return IndexView(p);
         }
@@ -352,10 +424,10 @@ namespace NewLife.Cube
             // 需要总记录数来分页
             p.RetrieveTotalCount = true;
 
-            var list = Search(p);
+            var list = SearchData(p);
 
             // Json输出
-            if (IsJsonRequest) return JsonOK(list, new { pager = p });
+            if (IsJsonRequest) return Json(0, null, list, new { pager = p });
 
             return View("List", list);
         }
@@ -367,14 +439,14 @@ namespace NewLife.Cube
         [DisplayName("查看{type}")]
         public virtual ActionResult Detail(String id)
         {
-            var entity = Find(id);
+            var entity = FindData(id);
             if (entity == null || (entity as IEntity).IsNullKey) throw new XException("要查看的数据[{0}]不存在！", id);
 
             // 验证数据权限
             Valid(entity, DataObjectMethodType.Select, false);
 
             // Json输出
-            if (IsJsonRequest) return JsonOK(entity, new { id });
+            if (IsJsonRequest) return Json(0, null, entity);
 
             return FormView(entity);
         }
@@ -387,68 +459,154 @@ namespace NewLife.Cube
             // 用于显示的列
             ViewBag.Fields = GetFields(true);
 
-            // 呈现表单前，保存实体对象。提交时优先使用该对象而不是去数据库查找，避免脏写
-            EntityModelBinder.SetEntity(entity);
+            //// 呈现表单前，保存实体对象。提交时优先使用该对象而不是去数据库查找，避免脏写
+            //EntityModelBinder.SetEntity(entity);
 
             return View("Form", entity);
         }
+
+        /// <summary>清空全表数据</summary>
+        /// <returns></returns>
+        [EntityAuthorize(PermissionFlags.Detail)]
+        [DisplayName("清空")]
+        public virtual ActionResult Clear()
+        {
+#if __CORE__
+            var url = Request.Headers["Referer"].FirstOrDefault() + "";
+#else
+            var url = Request.UrlReferrer + "";
+#endif
+
+            var p = Session[CacheKey] as Pager;
+            p = new Pager(p);
+            if (p != null && p.Params.Count > 0) return Json(500, "当前带有查询参数，为免误解，禁止全表清空！");
+
+            var count = Entity<TEntity>.Meta.Session.Truncate();
+
+            if (Request.IsAjaxRequest())
+                return JsonRefresh("共删除{0}行数据".F(count));
+            else if (!url.IsNullOrEmpty())
+                return Redirect(url);
+            else
+                return RedirectToAction("Index");
+        }
         #endregion
 
-        #region 高级Action
+        #region 数据接口
+        /// <summary>页面</summary>
+        /// <param name="token">令牌</param>
+        /// <param name="p">分页</param>
+        /// <returns></returns>
+        [AllowAnonymous]
+        [DisplayName("页面")]
+        public virtual ActionResult Html(String token, Pager p)
+        {
+            try
+            {
+                var issuer = ValidToken(token);
+
+                // 需要总记录数来分页
+                p.RetrieveTotalCount = true;
+
+                var list = SearchData(p);
+
+                return View("List", list);
+            }
+            catch (Exception ex)
+            {
+                return Content(ex.Message);
+            }
+        }
+
         /// <summary>Json接口</summary>
-        /// <param name="id">令牌</param>
+        /// <param name="token">令牌</param>
         /// <param name="p">分页</param>
         /// <returns></returns>
         [AllowAnonymous]
         [DisplayName("Json接口")]
-        public virtual ActionResult Json(String id, Pager p)
+        public virtual ActionResult Json(String token, Pager p)
         {
-            if (id.IsNullOrEmpty()) id = GetRequest("token");
-            if (id.IsNullOrEmpty()) id = GetRequest("key");
-
             try
             {
-                //var user = UserToken.Valid(id);
-                var app = App.Valid(id);
+                var issuer = ValidToken(token);
 
                 // 需要总记录数来分页
                 p.RetrieveTotalCount = true;
 
-                var list = Search(p);
+                var list = SearchData(p);
 
                 // Json输出
-                return JsonOK(list, new { pager = p });
+                return Json(0, null, list, new { issuer, pager = p });
             }
             catch (Exception ex)
             {
-                return JsonError(ex.GetTrue());
+                return Json(0, null, ex);
+            }
+        }
+
+        /// <summary>验证令牌是否有效</summary>
+        /// <param name="token"></param>
+        /// <returns></returns>
+        protected virtual String ValidToken(String token)
+        {
+            if (token.IsNullOrEmpty()) token = GetRequest("token");
+            if (token.IsNullOrEmpty()) token = GetRequest("key");
+
+            var app = App.FindBySecret(token);
+            if (app != null)
+            {
+                if (!app.Enable) throw new XException("非法授权！");
+
+                return app?.ToString();
+            }
+            else
+            {
+                var ut = UserToken.Valid(token, UserHost);
+                var user = ut.User;
+
+                // 定位菜单页面
+                var menu = ManageProvider.Menu.FindByFullName(GetType().FullName);
+
+                // 判断权限
+                if (menu == null || !user.Has(menu, PermissionFlags.Detail)) throw new Exception($"该用户[{user}]无权访问[{menu}]");
+
+                // 锁定页面
+                if (!ut.Url.IsNullOrEmpty())
+                {
+                    var url = ut.Url;
+                    if (url.Contains("?")) url = url.Substring(null, "?");
+                    if (!url.StartsWithIgnoreCase(menu.Url.TrimStart("~"))) throw new Exception($"该令牌[{user}]无权访问[{menu}]，仅限于[{url}]");
+                }
+
+                // 设置当前用户，用于数据权限控制
+                HttpContext.Items["userId"] = user.ID;
+                HttpContext.Items["CurrentUser"] = user;
+
+                return user?.ToString();
             }
         }
 
         /// <summary>Xml接口</summary>
-        /// <param name="id">令牌</param>
+        /// <param name="token">令牌</param>
         /// <param name="p">分页</param>
         /// <returns></returns>
         [AllowAnonymous]
         [DisplayName("Xml接口")]
-        public virtual ActionResult Xml(String id, Pager p)
+        public virtual ActionResult Xml(String token, Pager p)
         {
-            if (id.IsNullOrEmpty()) id = GetRequest("token");
-            if (id.IsNullOrEmpty()) id = GetRequest("key");
-
             var xml = "";
             try
             {
-                //var user = UserToken.Valid(id);
-                var app = App.Valid(id);
+                var issuer = ValidToken(token);
 
                 // 需要总记录数来分页
                 p.RetrieveTotalCount = true;
 
-                var list = Search(p) as IList<TEntity>;
+                var list = SearchData(p) as IList<TEntity>;
 
-                var rs = new Root { Result = false, Data = list, Pager = p };
-                xml = rs.ToXml(null, false, true);
+                var rs = new Root { Result = false, Data = list, Pager = p, Issuer = issuer };
+
+                xml = rs.ToXml(null, false, false);
             }
             catch (Exception ex)
             {
@@ -464,8 +622,54 @@ namespace NewLife.Cube
             public Boolean Result { get; set; }
             public IList<TEntity> Data { get; set; }
             public Pager Pager { get; set; }
+            public String Issuer { get; set; }
         }
 
+        /// <summary>Csv接口</summary>
+        /// <param name="token">令牌</param>
+        /// <param name="p">分页</param>
+        /// <returns></returns>
+        [AllowAnonymous]
+        [DisplayName("Csv接口")]
+        public virtual ActionResult Csv(String token, Pager p)
+        {
+            var issuer = ValidToken(token);
+
+            //// 需要总记录数来分页
+            //p.RetrieveTotalCount = true;
+
+            var list = SearchData(p);
+
+            // 准备需要输出的列
+            var fs = Factory.Fields.ToList();
+
+#if __CORE__
+            var rs = Response;
+            var headers = rs.Headers;
+            headers[HeaderNames.ContentEncoding] = "UTF8";
+            //headers[HeaderNames.ContentType] = "application/vnd.ms-excel";
+
+            // 允许同步IO，便于CsvFile刷数据Flush
+            var ft = HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpBodyControlFeature>();
+            if (ft != null) ft.AllowSynchronousIO = true;
+
+            OnExportCsv(fs, list, rs.Body);
+#else
+            var rs = Response;
+            rs.Charset = "UTF-8";
+            rs.ContentEncoding = Encoding.UTF8;
+            //rs.ContentType = "application/vnd.ms-excel";
+
+            OnExportCsv(fs, list, rs.OutputStream);
+
+            rs.Flush();
+#endif
+
+            return new EmptyResult();
+        }
+        #endregion
+
+        #region 导出Xml/Json/Excel/Csv
         /// <summary>导出Xml</summary>
         /// <returns></returns>
         [EntityAuthorize(PermissionFlags.Detail)]
@@ -535,7 +739,7 @@ namespace NewLife.Cube
 
         /// <summary>要导出Json的对象</summary>
         /// <returns></returns>
-        protected virtual Object OnExportJson() => ExportData();
+        protected virtual Object OnExportJson() => ExportData().ToList();
 
         /// <summary>导出Excel</summary>
         /// <returns></returns>
@@ -573,18 +777,23 @@ namespace NewLife.Cube
             }
 
             // 要导出的数据超大时，启用流式输出
+#if !__CORE__
             var buffer = true;
+#endif
             if (Factory.Count > 100_000)
             {
-                var p = new Pager(GetSession<Pager>(CacheKey))
+                var p = Session[CacheKey] as Pager;
+                p = new Pager(p)
                 {
                     PageSize = 1,
                     RetrieveTotalCount = true
                 };
-                Search(p);
+                SearchData(p);
 
+#if !__CORE__
                 // 超过一万行
                 if (p.TotalCount > 10_000) buffer = false;
+#endif
             }
 
             SetAttachment(null, ".xls", true);
@@ -594,6 +803,10 @@ namespace NewLife.Cube
             var headers = rs.Headers;
             headers[HeaderNames.ContentEncoding] = "UTF8";
             headers[HeaderNames.ContentType] = "application/vnd.ms-excel";
+
+            // 允许同步IO，便于CsvFile刷数据Flush
+            var ft = HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpBodyControlFeature>();
+            if (ft != null) ft.AllowSynchronousIO = true;
 
             var data = ExportData();
             OnExportExcel(fs, data, rs.Body);
@@ -621,25 +834,24 @@ namespace NewLife.Cube
         /// <param name="output">输出流</param>
         protected virtual void OnExportExcel(List<FieldItem> fs, IEnumerable<TEntity> list, Stream output)
         {
-            using (var csv = new CsvFile(output))
+            using var csv = new CsvFile(output);
+
+            // 列头
+            var headers = new List<String>();
+            foreach (var fi in fs)
             {
-                // 列头
-                var headers = new List<String>();
-                foreach (var fi in fs)
-                {
-                    var name = fi.DisplayName;
-                    if (name.IsNullOrEmpty()) name = fi.Description;
-                    if (name.IsNullOrEmpty()) name = fi.Name;
+                var name = fi.DisplayName;
+                if (name.IsNullOrEmpty()) name = fi.Description;
+                if (name.IsNullOrEmpty()) name = fi.Name;
 
-                    headers.Add(name);
-                }
-                csv.WriteLine(headers);
+                headers.Add(name);
+            }
+            csv.WriteLine(headers);
 
-                // 内容
-                foreach (var entity in list)
-                {
-                    csv.WriteLine(fs.Select(e => entity[e.Name]));
-                }
+            // 内容
+            foreach (var entity in list)
+            {
+                csv.WriteLine(fs.Select(e => entity[e.Name]));
             }
         }
 
@@ -652,19 +864,24 @@ namespace NewLife.Cube
             // 准备需要输出的列
             var fs = Factory.Fields.ToList();
 
+#if !__CORE__
             // 要导出的数据超大时，启用流式输出
             var buffer = true;
+#endif
             if (Factory.Count > 100_000)
             {
-                var p = new Pager(GetSession<Pager>(CacheKey))
+                var p = Session[CacheKey] as Pager;
+                p = new Pager(p)
                 {
                     PageSize = 1,
                     RetrieveTotalCount = true
                 };
-                Search(p);
+                SearchData(p);
 
+#if !__CORE__
                 // 超过一万行
                 if (p.TotalCount > 10_000) buffer = false;
+#endif
             }
 
             var name = GetType().Name.TrimEnd("Controller");
@@ -675,6 +892,10 @@ namespace NewLife.Cube
             var headers = rs.Headers;
             headers[HeaderNames.ContentEncoding] = "UTF8";
             headers[HeaderNames.ContentType] = "application/vnd.ms-excel";
+
+            // 允许同步IO，便于CsvFile刷数据Flush
+            var ft = HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpBodyControlFeature>();
+            if (ft != null) ft.AllowSynchronousIO = true;
 
             var data = ExportData();
             OnExportCsv(fs, data, rs.Body);
@@ -702,19 +923,20 @@ namespace NewLife.Cube
         /// <param name="output">输出流</param>
         protected virtual void OnExportCsv(List<FieldItem> fs, IEnumerable<TEntity> list, Stream output)
         {
-            using (var csv = new CsvFile(output))
-            {
-                // 列头
-                csv.WriteLine(fs.Select(e => e.Name));
+            using var csv = new CsvFile(output);
 
-                // 内容
-                foreach (var entity in list)
-                {
-                    csv.WriteLine(fs.Select(e => entity[e.Name]));
-                }
+            // 列头
+            csv.WriteLine(fs.Select(e => e.Name));
+
+            // 内容
+            foreach (var entity in list)
+            {
+                csv.WriteLine(fs.Select(e => entity[e.Name]));
             }
         }
+        #endregion
 
+        #region 备份/还原/导出/分享
         /// <summary>备份到服务器本地目录</summary>
         /// <returns></returns>
         [EntityAuthorize(PermissionFlags.Detail)]
@@ -728,24 +950,19 @@ namespace NewLife.Cube
 
                 var dal = fact.Session.Dal;
 
-                var name = fact.EntityType.Name;
+                var name = GetType().Name.TrimEnd("Controller");
                 var fileName = "{0}_{1:yyyyMMddHHmmss}.gz".F(name, DateTime.Now);
-                var bak = XCode.Setting.Current.BackupPath.CombinePath(fileName).GetFullPath();
+                var bak = NewLife.Setting.Current.BackupPath.CombinePath(fileName).GetBasePath();
                 bak.EnsureDirectory(true);
 
-                var rs = 0;
-                using (var fs = new FileStream(bak, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite))
-                using (var gs = new GZipStream(fs, CompressionLevel.Optimal))
-                {
-                    rs = dal.Backup(fact.FormatedTableName, gs);
-                }
+                var rs = dal.Backup(fact.Table.DataTable, bak);
 
-                return JsonOK($"备份[{fileName}]（{rs:n0}行）成功！");
+                return Json(0, $"备份[{fileName}]（{rs:n0}行）成功！");
             }
             catch (Exception ex)
             {
                 XTrace.WriteException(ex);
-                return JsonError(ex);
+                return Json(0, null, ex);
             }
         }
 
@@ -760,26 +977,21 @@ namespace NewLife.Cube
                 var fact = Factory;
                 var dal = fact.Session.Dal;
 
-                var name = fact.EntityType.Name;
+                var name = GetType().Name.TrimEnd("Controller");
                 var fileName = "{0}_*.gz".F(name);
 
-                var di = XCode.Setting.Current.BackupPath.AsDirectory();
+                var di = NewLife.Setting.Current.BackupPath.GetBasePath().AsDirectory();
                 var fi = di?.GetFiles(fileName)?.LastOrDefault();
                 if (fi == null || !fi.Exists) throw new XException($"找不到[{fileName}]的备份文件");
 
-                var rs = 0;
-                using (var fs = fi.OpenRead())
-                using (var gs = new GZipStream(fs, CompressionMode.Decompress))
-                {
-                    rs = dal.Restore(gs, fact.Table.DataTable);
-                }
+                var rs = dal.Restore(fi.FullName, fact.Table.DataTable);
 
-                return JsonOK($"恢复[{fileName}]（{rs:n0}行）成功！");
+                return Json(0, $"恢复[{fileName}]（{rs:n0}行）成功！");
             }
             catch (Exception ex)
             {
                 XTrace.WriteException(ex);
-                return JsonError(ex);
+                return Json(0, null, ex);
             }
         }
 
@@ -790,32 +1002,76 @@ namespace NewLife.Cube
         [DisplayName("导出")]
         public virtual ActionResult BackupAndExport()
         {
-            try
-            {
-                var fact = Factory;
-                if (fact.Count > 10_000_000) throw new XException($"数据量[{fact.Count:n0}>10_000_000]，禁止备份！");
-                var dal = fact.Session.Dal;
+            var fact = Factory;
+            if (fact.Count > 10_000_000) throw new XException($"数据量[{fact.Count:n0}>10_000_000]，禁止备份！");
+            var dal = fact.Session.Dal;
 
-                SetAttachment(null, ".gz", true);
+            var name = GetType().Name.TrimEnd("Controller");
+            SetAttachment(name, ".gz", true);
 
-                // 后面调整为压缩后直接写入到输出流，需要等待压缩格式升级，压缩流不支持Position
+            var rs = Response;
+
+            // 后面调整为压缩后直接写入到输出流，需要等待压缩格式升级，压缩流不支持Position
 #if __CORE__
-                var ms = Response.Body;
-#else
-                var ms = Response.OutputStream;
-#endif
-                using (var gs = new GZipStream(ms, CompressionLevel.Optimal, true))
-                {
-                    dal.Backup(fact.FormatedTableName, gs);
-                }
+            // 允许同步IO，便于CsvFile刷数据Flush
+            var ft = HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpBodyControlFeature>();
+            if (ft != null) ft.AllowSynchronousIO = true;
 
-                return new EmptyResult();
-            }
-            catch (Exception ex)
+            var ms = rs.Body;
+#else
+            // 要导出的数据超大时，启用流式输出
+            var buffer = true;
+            if (Factory.Count > 100_000) buffer = false;
+            rs.Buffer = buffer;
+            var ms = rs.OutputStream;
+#endif
+            using (var gs = new GZipStream(ms, CompressionLevel.Optimal, true))
             {
-                XTrace.WriteException(ex);
-                return JsonError(ex);
+                dal.Backup(fact.Table.DataTable, gs);
             }
+
+            return new EmptyResult();
+        }
+
+        /// <summary>分享数据</summary>
+        /// <remarks>
+        /// 为当前url创建用户令牌
+        /// </remarks>
+        /// <returns></returns>
+        [EntityAuthorize(PermissionFlags.Detail)]
+        [DisplayName("分享{type}")]
+        public virtual ActionResult Share()
+        {
+            // 当前用户所有令牌
+            var userId = ManageProvider.User.ID;
+            var list = UserToken.Search(null, userId, true, DateTime.Now, DateTime.MinValue, null);
+
+            var p = Session[CacheKey] as Pager;
+            p = new Pager(p)
+            {
+                RetrieveTotalCount = false,
+            };
+
+            // 构造url
+            var cs = GetControllerAction();
+            var url = cs[0].IsNullOrEmpty() ? $"/{cs[1]}" : $"/{cs[0]}/{cs[1]}";
+            var sb = p.GetBaseUrl(true, true, true);
+            if (sb.Length > 0) url += "?" + sb;
+
+            // 如果该url已存在，则延长有效期
+            var ut = list.FirstOrDefault(e => e.Url.EqualIgnoreCase(url));
+            if (ut == null) ut = new UserToken { UserID = userId, Url = url };
+
+            if (ut.Token.IsNullOrEmpty()) ut.Token = Rand.NextString(8);
+            ut.Enable = true;
+            ut.Expire = DateTime.Now.AddSeconds(Setting.Current.ShareExpire);
+            ut.Save();
+
+            //var url2 = $"/Admin/UserToken?q={ut.Token}";
+
+            //return Json(0, "分享成功！" + url, null, new { url = url2, time = 3 });
+
+            return RedirectToAction("Index", "UserToken", new { area = "Admin", q = ut.Token });
         }
         #endregion
 
@@ -828,11 +1084,17 @@ namespace NewLife.Cube
         {
             if (!SysConfig.Current.Develop) throw new InvalidOperationException("仅支持开发模式下使用！");
 
+            // 找到项目根目录
+            var root = GetProjectRoot();
+
             // 视图路径，Areas/区域/Views/控制器/_List_Data.cshtml
-            var vpath = "Areas/{0}/Views/{1}/_List_Data.cshtml".F(RouteData.DataTokens["area"], GetType().Name.TrimEnd("Controller"));
+            var cs = GetControllerAction();
+            var vpath = "Areas/{0}/Views/{1}/_List_Data.cshtml".F(cs[0], cs[1]);
+            if (!root.IsNullOrEmpty()) vpath = root.EnsureEnd("/") + vpath;
 
             var rs = ViewHelper.MakeListView(typeof(TEntity), vpath, ListFields);
 
+            LogProvider.Provider?.WriteLog(Factory.EntityType, "生成列表", true, vpath);
 #if !__CORE__
             //Js.Alert("生成列表模版 {0} 成功！".F(vpath));
 #endif
@@ -848,16 +1110,65 @@ namespace NewLife.Cube
         {
             if (!SysConfig.Current.Develop) throw new InvalidOperationException("仅支持开发模式下使用！");
 
+            // 找到项目根目录
+            var root = GetProjectRoot();
+
             // 视图路径，Areas/区域/Views/控制器/_Form_Body.cshtml
-            var vpath = "Areas/{0}/Views/{1}/_Form_Body.cshtml".F(RouteData.DataTokens["area"], GetType().Name.TrimEnd("Controller"));
+            var cs = GetControllerAction();
+            var vpath = "Areas/{0}/Views/{1}/_Form_Body.cshtml".F(cs[0], cs[1]);
+            if (!root.IsNullOrEmpty()) vpath = root.EnsureEnd("/") + vpath;
 
             var rs = ViewHelper.MakeFormView(typeof(TEntity), vpath, FormFields);
 
+            LogProvider.Provider?.WriteLog(Factory.EntityType, "生成表单", true, vpath);
 #if !__CORE__
             //Js.Alert("生成表单模版 {0} 成功！".F(vpath));
 #endif
 
             return RedirectToAction("Index");
+        }
+
+        /// <summary>生成搜索</summary>
+        /// <returns></returns>
+        [EntityAuthorize(PermissionFlags.Detail)]
+        [DisplayName("生成搜索")]
+        public ActionResult MakeSearch()
+        {
+            if (!SysConfig.Current.Develop) throw new InvalidOperationException("仅支持开发模式下使用！");
+
+            // 找到项目根目录
+            var root = GetProjectRoot();
+
+            // 视图路径，Areas/区域/Views/控制器/_List_Search.cshtml
+            var cs = GetControllerAction();
+            var vpath = "Areas/{0}/Views/{1}/_List_Search.cshtml".F(cs[0], cs[1]);
+            if (!root.IsNullOrEmpty()) vpath = root.EnsureEnd("/") + vpath;
+
+            var rs = ViewHelper.MakeSearchView(typeof(TEntity), vpath, ListFields);
+
+            LogProvider.Provider?.WriteLog(Factory.EntityType, "生成搜索", true, vpath);
+
+            return RedirectToAction("Index");
+        }
+
+        private String GetProjectRoot()
+        {
+            var asm = GetType().Assembly;
+            // core程序出现这种情况：bin/Debug/netcoreapp3.1
+            // 因此添加"../../../" 
+            var ps = new[] { "./", "../../", "../../" + asm.GetName().Name, "../../../", "../../../" + asm.GetName().Name };
+            String err = null;
+            foreach (var item in ps)
+            {
+                var dir = item.AsDirectory();
+                err += dir + "；";
+                if (!dir.Exists) continue;
+                var fis = dir.GetFiles("*.csproj", SearchOption.TopDirectoryOnly);
+                if (fis != null && fis.Length > 0) return item;
+            }
+
+            err = $"遍历以下路径均找不到项目路径，请检查项目路径：{err}";
+            throw new InvalidOperationException(err);
         }
         #endregion
 
@@ -937,25 +1248,6 @@ namespace NewLife.Cube
         #endregion
 
         #region 辅助
-        /// <summary>是否Json请求</summary>
-        protected virtual Boolean IsJsonRequest
-        {
-            get
-            {
-                if (Request.ContentType.EqualIgnoreCase("application/json")) return true;
-
-#if __CORE__
-                if (Request.Headers["Accept"].Any(e => e.Split(',').Any(a => a.Trim() == "application/json"))) return true;
-#else
-                if (Request.AcceptTypes.Any(e => e == "application/json")) return true;
-#endif
-
-                if (GetRequest("output").EqualIgnoreCase("json")) return true;
-                if ((RouteData.Values["output"] + "").EqualIgnoreCase("json")) return true;
-
-                return false;
-            }
-        }
 #if !__CORE__
         /// <summary>启用压缩</summary>
         protected virtual void SetCompress()

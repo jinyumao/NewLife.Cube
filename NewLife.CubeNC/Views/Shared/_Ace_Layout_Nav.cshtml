@@ -1,8 +1,8 @@
 ﻿@using XCode
 @using XCode.Membership
 @{
-    //var menu = ManageProvider.Menu.Current;
     var menu = ViewBag.Menu as IMenu;
+    if (menu == null) menu = Context.Items["CurrentMenu"] as IMenu;
 }
 <li>
     <i class="ace-icon fa fa-home home-icon"></i>
@@ -12,13 +12,11 @@
         {
             if (item.ID != 0)
             {
-                <a href="@(item.Url!=null? Url.Content(item.Url):"#")">@item.DisplayName</a>
-
+                @item.DisplayName
             }
         }
     }
 </li>
-
 <li>
     <a href="@Url.Action("Index")">@(menu != null ? menu.DisplayName : ViewBag.Title)</a>
 </li>

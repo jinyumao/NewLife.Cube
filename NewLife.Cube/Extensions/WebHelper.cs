@@ -4,7 +4,12 @@ using System.Collections.Specialized;
 using System.Text;
 using System.Web;
 using NewLife.Collections;
+using NewLife.Log;
+using XCode.Membership;
+using System.IO;
 #if __CORE__
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.Extensions.Primitives;
 #endif
 
@@ -14,52 +19,9 @@ namespace NewLife.Web
     public static class WebHelper
     {
         #region 用户主机
-        [ThreadStatic]
-        private static String _UserHost;
         /// <summary>用户主机。支持非Web</summary>
-        public static String UserHost
-        {
-            get
-            {
-#if !__CORE__
-                var ctx = HttpContext.Current;
-                if (ctx != null)
-                {
-                    var str = (String)ctx.Items["UserHostAddress"];
-                    if (!String.IsNullOrEmpty(str)) return str;
-
-                    var req = ctx.Request;
-                    if (req != null)
-                    {
-                        if (str.IsNullOrEmpty()) str = req.ServerVariables["HTTP_X_FORWARDED_FOR"];
-                        if (str.IsNullOrEmpty()) str = req.ServerVariables["X-Real-IP"];
-                        if (str.IsNullOrEmpty()) str = req.ServerVariables["X-Forwarded-For"];
-                        if (str.IsNullOrEmpty()) str = req.ServerVariables["REMOTE_ADDR"];
-                        if (str.IsNullOrEmpty()) str = req.UserHostName;
-                        if (str.IsNullOrEmpty()) str = req.UserHostAddress;
-
-                        //// 加上浏览器端口
-                        //var port = Request.ServerVariables["REMOTE_PORT"];
-                        //if (!port.IsNullOrEmpty()) str += ":" + port;
-
-                        ctx.Items["UserHostAddress"] = str;
-
-                        return str;
-                    }
-                }
-#endif
-
-                return _UserHost;
-            }
-            set
-            {
-                _UserHost = value;
-#if !__CORE__
-                var ctx = HttpContext.Current;
-                if (ctx != null) ctx.Items["UserHostAddress"] = value;
-#endif
-            }
-        }
+        [Obsolete("=>ManageProvider.UserHost")]
+        public static String UserHost { get => ManageProvider.UserHost; set => ManageProvider.UserHost = value; }
         #endregion
 
         #region Http请求
@@ -113,11 +75,7 @@ namespace NewLife.Web
             var str = req.RawUrl;
             if (!str.IsNullOrEmpty()) uri = new Uri(uri, str);
 
-            str = req.ServerVariables["HTTP_X_REQUEST_URI"];
-            if (str.IsNullOrEmpty()) str = req.ServerVariables["X-Request-Uri"];
-            if (!str.IsNullOrEmpty()) uri = new Uri(uri, str);
-
-            return uri;
+            return GetRawUrl(uri, k => req.ServerVariables[k]);
         }
 
         /// <summary>获取原始请求Url，支持反向代理</summary>
@@ -125,16 +83,18 @@ namespace NewLife.Web
         /// <returns></returns>
         public static Uri GetRawUrl(this HttpRequestBase req)
         {
-            var uri = req.Url;
+            Uri uri = null;
 
-            var str = req.RawUrl;
-            if (!str.IsNullOrEmpty()) uri = new Uri(uri, str);
+            // 配置
+            var set = OAuthConfig.Current;
+            if (!set.AppUrl.IsNullOrEmpty()) uri = new Uri(set.AppUrl);
 
-            str = req.ServerVariables["HTTP_X_REQUEST_URI"];
-            if (str.IsNullOrEmpty()) str = req.ServerVariables["X-Request-Uri"];
-            if (!str.IsNullOrEmpty()) uri = new Uri(uri, str);
+            // 取请求头
+            if (uri == null && !req.RawUrl.IsNullOrEmpty()) uri = new Uri(req.Url, req.RawUrl);
 
-            return uri;
+            if (uri == null) uri = req.Url;
+
+            return GetRawUrl(uri, k => req.ServerVariables[k]);
         }
 #else
         /// <summary>返回请求字符串和表单的名值字段，过滤空值和ViewState，同名时优先表单</summary>
@@ -147,8 +107,8 @@ namespace NewLife.Web
 
                 var req = ctx.Request;
                 IEnumerable<KeyValuePair<String, StringValues>>[] nvss;
-                nvss = req.HasFormContentType ? 
-                    new IEnumerable<KeyValuePair<String, StringValues>>[] { req.Query, req.Form } : 
+                nvss = req.HasFormContentType ?
+                    new IEnumerable<KeyValuePair<String, StringValues>>[] { req.Query, req.Form } :
                     new IEnumerable<KeyValuePair<String, StringValues>>[] { req.Query };
 
 
@@ -180,7 +140,62 @@ namespace NewLife.Web
                 return dic;
             }
         }
+
+        /// <summary>获取原始请求Url，支持反向代理</summary>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        public static Uri GetRawUrl(this HttpRequest request)
+        {
+            Uri uri = null;
+
+            // 配置
+            var set = OAuthConfig.Current;
+            if (!set.AppUrl.IsNullOrEmpty()) uri = new Uri(set.AppUrl);
+
+            // 取请求头
+            if (uri == null)
+            {
+                var url = request.GetEncodedUrl();
+                uri = new Uri(url);
+            }
+
+            return GetRawUrl(uri, k => request.Headers[k]);
+        }
+
+        /// <summary>保存上传文件</summary>
+        /// <param name="file"></param>
+        /// <param name="filename"></param>
+        public static void SaveAs(this IFormFile file, String filename)
+        {
+            using var fs = new FileStream(filename, FileMode.OpenOrCreate);
+            //file.OpenReadStream().CopyTo(fs);
+            file.CopyTo(fs);
+            fs.SetLength(fs.Position);
+        }
 #endif
+
+        private static Uri GetRawUrl(Uri uri, Func<String, String> headers)
+        {
+            var str = headers("HTTP_X_REQUEST_URI");
+            if (str.IsNullOrEmpty()) str = headers("X-Request-Uri");
+
+            if (str.IsNullOrEmpty())
+            {
+                // 阿里云CDN默认支持 X-Client-Scheme: https
+                var scheme = headers("HTTP_X_CLIENT_SCHEME");
+                if (scheme.IsNullOrEmpty()) scheme = headers("X-Client-Scheme");
+
+                // nginx
+                if (scheme.IsNullOrEmpty()) scheme = headers("HTTP_X_FORWARDED_PROTO");
+                if (scheme.IsNullOrEmpty()) scheme = headers("X-Forwarded-Proto");
+
+                if (!scheme.IsNullOrEmpty()) str = scheme + "://" + uri.ToString().Substring("://");
+            }
+
+            if (!str.IsNullOrEmpty()) uri = new Uri(uri, str);
+
+            return uri;
+        }
         #endregion
 
         #region Url扩展
@@ -212,7 +227,7 @@ namespace NewLife.Web
             if (name.IsNullOrWhiteSpace()) return sb;
 
             // 必须注意，value可能是时间类型
-            return UrlParam(sb, "{0}={1}".F(name, value));
+            return UrlParam(sb, "{0}={1}".F(HttpUtility.UrlEncode(name), HttpUtility.UrlEncode("{0}".F(value))));
         }
 
         /// <summary>把一个参数字典追加Url参数，指定包含的参数</summary>
@@ -224,7 +239,7 @@ namespace NewLife.Web
         {
             foreach (var item in pms)
             {
-                if (item.Key.EqualIgnoreCase(includes))
+                if (!item.Value.IsNullOrEmpty() && item.Key.EqualIgnoreCase(includes))
                     sb.UrlParam(item.Key, item.Value);
             }
             return sb;
@@ -239,7 +254,7 @@ namespace NewLife.Web
         {
             foreach (var item in pms)
             {
-                if (!item.Key.EqualIgnoreCase(excludes))
+                if (!item.Value.IsNullOrEmpty() && !item.Key.EqualIgnoreCase(excludes))
                     sb.UrlParam(item.Key, item.Value);
             }
             return sb;

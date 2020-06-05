@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
 using System.Text;
 using System.Web.Script.Serialization;
 using System.Xml.Serialization;
@@ -10,7 +12,7 @@ using NewLife.Data;
 namespace NewLife.Web
 {
     /// <summary>分页器。包含分页排序参数，支持构造Url的功能</summary>
-    public class Pager : PageParameter
+    public class Pager : PageParameter, IExtend
     {
         #region 名称
         /// <summary>名称类。用户可根据需要修改Url参数名</summary>
@@ -64,8 +66,10 @@ namespace NewLife.Web
                     return PageIndex + "";
                 else if (key.EqualIgnoreCase(_.PageSize))
                     return PageSize + "";
-                else
-                    return Params[key];
+
+                // 为了布尔型取空字符串时得到null。var enable = p["enable"]?.ToBoolean()
+                var v = Params[key];
+                return v.IsNullOrEmpty() ? null : v;
             }
             set
             {
@@ -106,18 +110,40 @@ namespace NewLife.Web
         /// <param name="where">查询条件，不包含排序和分页</param>
         /// <param name="order">排序</param>
         /// <param name="page">分页</param>
+        /// <param name="excludes">要排除的参数</param>
         /// <returns></returns>
-        public virtual StringBuilder GetBaseUrl(Boolean where, Boolean order, Boolean page)
+        public virtual StringBuilder GetBaseUrl(Boolean where, Boolean order, Boolean page, String[] excludes = null)
         {
             var sb = new StringBuilder();
             var dic = Params;
-            // 过滤
-            dic = PagerHelper.FilterSpecialChar(dic);
+            //// 过滤
+            //dic = PagerHelper.FilterSpecialChar(dic);
 
             // 先构造基本条件，再排序到分页
-            if (where) sb.UrlParamsExcept(dic, _.Sort, _.Desc, _.PageIndex, _.PageSize);
-            if (order) sb.UrlParams(dic, _.Sort, _.Desc);
-            if (page) sb.UrlParams(dic, _.PageIndex, _.PageSize);
+            if (where)
+            {
+                var ex = new List<String>
+                {
+                    _.Sort,
+                    _.Desc,
+                    _.PageIndex,
+                    _.PageSize,
+                };
+                if (excludes != null && excludes.Length > 0) ex.AddRange(excludes);
+                sb.UrlParamsExcept(dic, ex.ToArray());
+            }
+            if (order)
+            {
+                sb.UrlParams(dic, _.Sort, _.Desc);
+                if (!dic.ContainsKey(_.Sort) && !Sort.IsNullOrEmpty()) sb.UrlParam(_.Sort, Sort);
+                if (!dic.ContainsKey(_.Desc) && Desc) sb.UrlParam(_.Desc, Desc);
+            }
+            if (page)
+            {
+                sb.UrlParams(dic, _.PageIndex, _.PageSize);
+                if (!dic.ContainsKey(_.PageIndex) && PageIndex > 1) sb.UrlParam(_.PageIndex, PageIndex);
+                if (!dic.ContainsKey(_.PageSize) && PageSize > 0 && PageSize != 20) sb.UrlParam(_.PageSize, PageSize);
+            }
 
             return sb;
         }
@@ -187,6 +213,15 @@ namespace NewLife.Web
 
             return name;
         }
+        #endregion
+
+        #region IExtend接口
+        /// <summary>参数集合</summary>
+        [XmlIgnore, ScriptIgnore]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public IDictionary<String, Object> Items => Params.ToDictionary(e => e.Key, e => (Object)e.Value);
+
+        Object IExtend.this[String key] { get => Params[key]; set => Params[key] = value == null ? null : value + ""; }
         #endregion
     }
 }

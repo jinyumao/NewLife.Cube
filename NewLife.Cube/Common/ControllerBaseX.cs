@@ -5,8 +5,12 @@ using System.Text;
 using NewLife.Reflection;
 using NewLife.Serialization;
 using XCode.Membership;
+using NewLife.Remoting;
+using System.Linq;
+using NewLife.Security;
 #if __CORE__
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NewLife.Cube.Extensions;
 #else
@@ -19,6 +23,17 @@ namespace NewLife.Cube
     public class ControllerBaseX : Controller
     {
         #region 属性
+#if __CORE__
+        ///// <summary></summary>
+        //static readonly SessionProvider _sessionProvider = new SessionProvider();
+
+        /// <summary>临时会话扩展信息</summary>
+        public IDictionary<String, Object> Session { get; private set; }
+#endif
+
+        /// <summary>用户主机</summary>
+        public String UserHost => HttpContext.GetUserHost();
+
         /// <summary>页面设置</summary>
         public PageSetting PageSetting { get; set; }
         #endregion
@@ -32,30 +47,83 @@ namespace NewLife.Cube
         }
 
         /// <summary>动作执行前</summary>
-        /// <param name="filterContext"></param>
+        /// <param name="context"></param>
 #if __CORE__
-        public override void OnActionExecuting(Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext filterContext)
+        public override void OnActionExecuting(Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext context)
 #else
-        protected override void OnActionExecuting(ActionExecutingContext filterContext)
+        protected override void OnActionExecuting(ActionExecutingContext context)
 #endif
         {
             // 页面设置
             ViewBag.PageSetting = PageSetting;
 
+#if __CORE__
+            //// 准备Session
+            //var ss = context.HttpContext.Session;
+            //if (ss != null)
+            //{
+            //    //var token = Request.Cookies["Token"];
+            //    var token = ss.GetString("Cube_Token");
+            //    if (token.IsNullOrEmpty())
+            //    {
+            //        token = Rand.NextString(16);
+            //        //Response.Cookies.Append("Token", token, new CookieOptions { });
+            //        ss.SetString("Cube_Token", token);
+            //    }
+
+            //    //Session = _sessionProvider.GetSession(ss.Id);
+            //    Session = _sessionProvider.GetSession(token);
+            //    context.HttpContext.Items["Session"] = Session;
+            //}
+
+            Session = context.HttpContext.Items["Session"] as IDictionary<String, Object>;
+#endif
+
             // 没有用户时无权
             var user = ManageProvider.User;
             if (user != null)
             {
+                // 设置变量，数据权限使用
+                HttpContext.Items["userId"] = user.ID;
+
                 // 没有菜单时不做权限控制
-                //var menu = ManageProvider.Menu;
-                var ctx = filterContext.HttpContext;
+                var ctx = context.HttpContext;
                 if (ctx.Items["CurrentMenu"] is IMenu menu)
                 {
                     PageSetting.EnableSelect = user.Has(menu, PermissionFlags.Update, PermissionFlags.Delete);
                 }
             }
 
-            base.OnActionExecuting(filterContext);
+            base.OnActionExecuting(context);
+        }
+
+        /// <summary>动作执行后</summary>
+        /// <param name="context"></param>
+#if __CORE__
+        public override void OnActionExecuted(Microsoft.AspNetCore.Mvc.Filters.ActionExecutedContext context)
+#else
+        protected override void OnActionExecuted(ActionExecutedContext context)
+#endif
+        {
+            if (IsJsonRequest)
+            {
+                var ex = context.Exception?.GetTrue();
+                if (ex != null && !context.ExceptionHandled)
+                {
+                    var code = 500;
+                    var message = ex.Message;
+                    if (ex is ApiException aex)
+                    {
+                        code = aex.Code;
+                        message = aex.Message;
+                    }
+
+                    context.Result = Json(code, message, null);
+                    context.ExceptionHandled = true;
+                }
+            }
+
+            base.OnActionExecuted(context);
         }
         #endregion
 
@@ -128,19 +196,75 @@ namespace NewLife.Cube
         /// <param name="data">结果。可以是错误文本、成功文本、其它结构化数据</param>
         /// <param name="url">提示信息后跳转的目标地址，[refresh]表示刷新当前页</param>
         /// <returns></returns>
-        protected virtual ActionResult JsonTips(Object data, String url = null) => ControllerHelper.JsonTips(data, url);
+        protected virtual ActionResult JsonTips(Object data, String url = null) => Json(0, data as String, data, new { url });
 
         /// <summary>返回结果并刷新</summary>
         /// <param name="data">消息</param>
         /// <returns></returns>
-        protected virtual ActionResult JsonRefresh(Object data) => ControllerHelper.JsonRefresh(data);
+        protected virtual ActionResult JsonRefresh(Object data) => Json(0, data as String, data, new { url = "[refresh]" });
+
+        /// <summary>
+        /// 返回结果并刷新
+        /// </summary>
+        /// <param name="data">消息</param>
+        /// <param name="time">延迟刷新秒数</param>
+        /// <returns></returns>
+        protected virtual ActionResult JsonRefresh(Object data, Int32 time) => Json(0, data as String, data, new { url = "[refresh]", time });
+
+        /// <summary>是否Json请求</summary>
+        protected virtual Boolean IsJsonRequest
+        {
+            get
+            {
+                if (Request.ContentType.EqualIgnoreCase("application/json")) return true;
+
+#if __CORE__
+                if (Request.Headers["Accept"].Any(e => e.Split(',').Any(a => a.Trim() == "application/json"))) return true;
+#else
+                if (Request.AcceptTypes != null && Request.AcceptTypes.Any(e => e == "application/json")) return true;
+#endif
+
+                if (GetRequest("output").EqualIgnoreCase("json")) return true;
+                if ((RouteData.Values["output"] + "").EqualIgnoreCase("json")) return true;
+
+                return false;
+            }
+        }
         #endregion
 
         #region Json结果
+        /// <summary>响应Json结果</summary>
+        /// <param name="code">代码。0成功，其它为错误代码</param>
+        /// <param name="message">消息，成功或失败时的文本消息</param>
+        /// <param name="data">数据对象</param>
+        /// <param name="extend">扩展数据</param>
+        /// <returns></returns>
+        [NonAction]
+        public virtual ActionResult Json(Int32 code, String message, Object data = null, Object extend = null)
+        {
+            if (data is Exception ex)
+            {
+                if (code == 0) code = 500;
+                if (message.IsNullOrEmpty()) message = ex.GetTrue()?.Message;
+                data = null;
+            }
+
+            Object rs = new { code, message, data };
+            if (extend != null)
+            {
+                var dic = rs.ToDictionary();
+                dic.Merge(extend);
+                rs = dic;
+            }
+
+            return Content(OnJsonSerialize(rs), "application/json", Encoding.UTF8);
+        }
+
         /// <summary>返回Json数据</summary>
         /// <param name="data">数据对象，作为data成员返回</param>
         /// <param name="extend">与data并行的其它顶级成员</param>
         /// <returns></returns>
+        [Obsolete("=>Json(code,message,data)")]
         protected virtual ActionResult JsonOK(Object data, Object extend = null)
         {
             var rs = new { result = true, data };
@@ -162,6 +286,7 @@ namespace NewLife.Cube
         /// <param name="data">数据对象或异常对象，作为data成员返回</param>
         /// <param name="extend">与data并行的其它顶级成员</param>
         /// <returns></returns>
+        [Obsolete("=>Json(code,message,data)")]
         protected virtual ActionResult JsonError(Object data, Object extend = null)
         {
             if (data is Exception ex) data = ex.GetTrue().Message;
@@ -187,11 +312,29 @@ namespace NewLife.Cube
         protected virtual String OnJsonSerialize(Object data) => data.ToJson();
         #endregion
 
-        #region 常用属性
-        /// <summary>
-        /// 用户主机
-        /// </summary>
-        public String UserHost => HttpContext.Request.GetUserHost();
+        #region 辅助
+        /// <summary>获取控制器名称</summary>
+        /// <returns></returns>
+        protected virtual String[] GetControllerAction()
+        {
+#if __CORE__
+            var act = ControllerContext.ActionDescriptor;
+            var controller = act.ControllerName;
+            var action = act.ActionName;
+            act.RouteValues.TryGetValue("Area", out var area);
+#else
+            var area = (String)RouteData.Values["area"];
+            if (area.IsNullOrEmpty()) area = (String)RouteData.DataTokens["area"];
+
+            var controller = (String)RouteData.Values["controller"];
+            if (controller.IsNullOrEmpty()) controller = (String)RouteData.DataTokens["controller"];
+
+            var action = (String)RouteData.Values["action"];
+            if (action.IsNullOrEmpty()) controller = (String)RouteData.DataTokens["action"];
+#endif
+
+            return new[] { area, controller, action };
+        }
         #endregion
     }
 }

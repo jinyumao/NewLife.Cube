@@ -98,7 +98,81 @@ namespace NewLife.Cube
 
         internal static Boolean MakeListView(Type entityType, String vpath, List<FieldItem> fields)
         {
-            var tmp = @"@using NewLife;
+#if __CORE__
+            var tmp = @"@model IList<{EntityType}>
+@using {Namespace}
+@using NewLife;
+@using NewLife.Web;
+@using XCode;
+@using XCode.Configuration;
+@using XCode.Membership;
+@using NewLife.Cube;
+@{
+    var fact = ViewBag.Factory as IEntityFactory;
+    var page = ViewBag.Page as Pager;
+    var fields = ViewBag.Fields as IList<FieldItem>;
+    var set = ViewBag.PageSetting as PageSetting;
+    //var provider = ManageProvider.Provider;
+}
+<table class=""table table-bordered table-hover table-striped table-condensed"">
+    <thead>
+        <tr>
+            @if (set.EnableSelect)
+            {
+                <th class=""text-center"" style=""width:10px;""><input type=""checkbox"" id=""chkAll"" title=""全选"" /></th>
+            }
+            @foreach(var item in fields)
+            {
+                var sortUrl = item.OriField != null ? page.GetSortUrl(item.OriField.Name) : page.GetSortUrl(item.Name);
+                <th class=""text-center""><a href=""@Html.Raw(sortUrl)"">@item.DisplayName</a></th>
+            }
+            @if (this.Has(PermissionFlags.Detail, PermissionFlags.Update, PermissionFlags.Delete))
+            {
+                <th class=""text-center"">操作</th>
+            }
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var entity in Model)
+        {
+            <tr>
+                @if (set.EnableSelect)
+                {
+                    <td class=""text-center""><input type=""checkbox"" name=""keys"" value=""@entity.ID"" /></td>
+                }
+                @foreach (var item in fields)
+                {
+                    @await Html.PartialAsync(""_List_Data_Item"", new ValueTuple<IEntity, FieldItem>(entity, item))
+                }
+                @if (this.Has(PermissionFlags.Detail, PermissionFlags.Update, PermissionFlags.Delete))
+                {
+                    <td class=""text-center"">
+                        @await Html.PartialAsync(""_List_Data_Action"", (Object)entity)
+                    </td>
+                }
+            </tr>
+        }
+        @if (page.State is {EntityType})
+        {
+            var entity = page.State as {EntityType};
+            <tr>
+                @if (set.EnableSelect)
+                {
+                    <td></td>
+                }
+                @await Html.PartialAsync(""_List_Data_Stat"", entity)
+                @if (this.Has(PermissionFlags.Detail, PermissionFlags.Update, PermissionFlags.Delete))
+                {
+                    <td></td>
+                }
+            </tr>
+        }
+    </tbody>
+</table>";
+#else
+            var tmp = @"@model IList<{EntityType}>
+@using {Namespace}
+@using NewLife;
 @using NewLife.Web;
 @using XCode;
 @using XCode.Configuration;
@@ -109,7 +183,7 @@ namespace NewLife.Cube
 @using System.Web.Mvc.Html;
 @using System.Web.Routing;
 @{
-    var fact = ViewBag.Factory as IEntityOperate;
+    var fact = ViewBag.Factory as IEntityFactory;
     var page = ViewBag.Page as Pager;
     var fields = ViewBag.Fields as IList<FieldItem>;
     var set = ViewBag.PageSetting as PageSetting;
@@ -153,15 +227,15 @@ namespace NewLife.Cube
                 }
             </tr>
         }
-        @if (page.State != null)
+        @if (page.State is {EntityType})
         {
-            var entity = page.State as IEntity;
+            var entity = page.State as {EntityType};
             <tr>
                 @if (set.EnableSelect)
                 {
                     <td></td>
                 }
-                @Html.Partial(""_List_Data_Stat"", page.State)
+                @Html.Partial(""_List_Data_Stat"", entity)
                 @if (this.Has(PermissionFlags.Detail, PermissionFlags.Update, PermissionFlags.Delete))
                 {
                     <td></td>
@@ -170,13 +244,12 @@ namespace NewLife.Cube
         }
     </tbody>
 </table>";
+#endif
             var sb = new StringBuilder();
             var fact = EntityFactory.CreateOperate(entityType);
 
-            sb.AppendFormat("@model IList<{0}>", entityType.FullName);
-            sb.AppendLine();
-
-            tmp = tmp.Replace("page.State as IEntity", "page.State as " + entityType.FullName);
+            tmp = tmp.Replace("{EntityType}", entityType.Name);
+            tmp = tmp.Replace("{Namespace}", entityType.Namespace);
 
             var str = tmp.Substring(null, "            @foreach");
             // 如果有用户字段，则启用provider
@@ -329,18 +402,19 @@ namespace NewLife.Cube
 
             sb.Append("                @if");
             var str2 = tmp.Substring("                @if", null, ps[1]);
-            str = str2.Replace("                @Html.Partial(\"_List_Data_Stat\", page.State)", str);
+#if __CORE__
+            str = str2.Replace("                @await Html.PartialAsync(\"_List_Data_Stat\", entity)", str);
+#else
+            str = str2.Replace("                @Html.Partial(\"_List_Data_Stat\", entity)", str);
+#endif
             sb.Append(str);
-
-            //sb.Append("@if (page.State != null)");
-            //sb.Append(tmp.Substring("@if (page.State != null)", null, ps[1]));
 
             File.WriteAllText(vpath.GetFullPath().EnsureDirectory(true), sb.ToString(), Encoding.UTF8);
 
             return true;
         }
 
-        private static void BuildUser(FieldItem item, StringBuilder sb) => sb.AppendFormat(@"<td class=""text-center"" class=""text-right"">@provider.FindByID(entity.{0})</td>", item.Name);
+        private static void BuildUser(FieldItem item, StringBuilder sb) => sb.AppendFormat(@"<td class=""text-center"">@provider.FindByID(entity.{0})</td>", item.Name);
 
         private static void BuildIP(FieldItem item, StringBuilder sb) => sb.AppendFormat(@"<td class=""text-center"" title=""@entity.{0}.IPToAddress()"">@entity.{0}</td>", item.Name);
 
@@ -426,9 +500,47 @@ namespace NewLife.Cube
 
         internal static Boolean MakeFormView(Type entityType, String vpath, List<FieldItem> fields)
         {
-            var tmp = @"@using NewLife;
+#if __CORE__
+            var tmp = @"@model {EntityType}
+@using {Namespace}
+@using NewLife;
+@using NewLife.Web;
 @using XCode;
 @using XCode.Configuration;
+@using XCode.Membership;
+@using NewLife.Cube;
+@{
+    var entity = Model;
+    var fields = ViewBag.Fields as IList<FieldItem>;
+    var isNew = (entity as IEntity).IsNullKey;
+}
+@foreach (var item in fields)
+{
+    if (!item.IsIdentity)
+    {
+        <div class=""@cls"">
+            @await Html.PartialAsync(""_Form_Item"", new Pair(entity, item))
+        </div>
+    }
+}
+@await Html.PartialAsync(""_Form_Footer"", entity)
+@if (this.Has(PermissionFlags.Insert, PermissionFlags.Update))
+{
+    <div class=""clearfix form-actions col-sm-12 col-md-12"">
+        <label class=""control-label col-xs-4 col-sm-5 col-md-5""></label>
+        <button type=""submit"" class=""btn btn-success btn-sm""><i class=""glyphicon glyphicon-@(isNew ? ""plus"" : ""save"")""></i><strong>@(isNew ? ""新增"" : ""保存"")</strong></button>
+        <button type=""button"" class=""btn btn-danger btn-sm"" onclick=""history.go(-1);""><i class=""glyphicon glyphicon-remove""></i><strong>取消</strong></button>
+    </div>
+}";
+#else
+            var tmp = @"@model {EntityType}
+@using {Namespace}
+@using NewLife;
+@using NewLife.Web;
+@using XCode;
+@using XCode.Configuration;
+@using XCode.Membership;
+@using NewLife.Cube;
 @{
     var entity = Model;
     var fields = ViewBag.Fields as IList<FieldItem>;
@@ -452,11 +564,15 @@ namespace NewLife.Cube
         <button type=""button"" class=""btn btn-danger btn-sm"" onclick=""history.go(-1);""><i class=""glyphicon glyphicon-remove""></i><strong>取消</strong></button>
     </div>
 }";
+#endif
 
             var sb = new StringBuilder();
             var fact = EntityFactory.CreateOperate(entityType);
 
-            sb.AppendLine($"@model {entityType.FullName}");
+            tmp = tmp.Replace("{EntityType}", entityType.Name);
+            tmp = tmp.Replace("{Namespace}", entityType.Namespace);
+
+            //sb.AppendLine($"@model {entityType.FullName}");
 
             var str = tmp.Substring(null, "@foreach");
             sb.Append(str);
@@ -475,7 +591,11 @@ namespace NewLife.Cube
                 sb.AppendLine("</div>");
             }
 
+#if __CORE__
+            var p = tmp.IndexOf(@"@await Html.PartialAsync(""_Form_Footer""");
+#else
             var p = tmp.IndexOf(@"@Html.Partial(""_Form_Footer""");
+#endif
             sb.Append(tmp.Substring(p));
 
             File.WriteAllText(vpath.GetFullPath().EnsureDirectory(true), sb.ToString(), Encoding.UTF8);
@@ -483,7 +603,7 @@ namespace NewLife.Cube
             return true;
         }
 
-        private static void BuildFormItem(FieldItem field, StringBuilder sb, IEntityOperate fact)
+        private static void BuildFormItem(FieldItem field, StringBuilder sb, IEntityFactory fact)
         {
             var des = field.Description.TrimStart(field.DisplayName).TrimStart(",", ".", "，", "。");
 
@@ -518,7 +638,7 @@ namespace NewLife.Cube
             else if (field.Type == typeof(String))
                 BuildStringItem(field, sb);
             else if (fact.EntityType.As<IEntityTree>() && fact.EntityType.GetValue("Setting") is IEntityTreeSetting set && set?.Parent == field.Name)
-                sb.AppendLine($"        @Html.ForTreeEditor({fact.EntityType.Name}._.{field.Name}, entity)");
+                sb.AppendLine($"        @Html.ForEditor({fact.EntityType.Name}._.{field.Name}, entity)");
             else
             {
                 switch (field.Type.GetTypeCode())
@@ -612,6 +732,58 @@ namespace NewLife.Cube
             sb.AppendLine($"        {txt}");
         }
 
+        internal static Boolean MakeSearchView(Type entityType, String vpath, List<FieldItem> fields)
+        {
+#if __CORE__
+            var tmp = @"@using {Namespace}
+@using NewLife;
+@using NewLife.Web;
+@using XCode;
+@{
+    var fact = ViewBag.Factory as IEntityFactory;
+    var page = ViewBag.Page as Pager;
+}
+@*<div class=""form-group"">
+    @Html.ActionLink(""用户链接"", ""Index"", ""UserConnect"", null, new { @class = ""btn btn-success btn-sm"" })
+    @Html.ActionLink(""用户在线"", ""Index"", ""UserOnline"", null, new { @class = ""btn btn-success btn-sm"" })
+    <label for=""RoleID"" class=""control-label"">角色：</label>
+    @Html.ForDropDownList(""RoleID"", Role.FindAllWithCache().Cast<IEntity>().ToList(), page[""roldId""], ""全部"", true)
+    @Html.ForDropDownList(""p"", VisitStat.FindAllPageName(), page[""p""], ""全部页面"", true)
+</div>*@
+@*@await Html.PartialAsync(""_DateRange"")*@";
+#else
+            var tmp = @"@using {Namespace}
+@using NewLife;
+@using NewLife.Web;
+@using XCode;
+@{
+    var fact = ViewBag.Factory as IEntityFactory;
+    var page = ViewBag.Page as Pager;
+}
+@*<div class=""form-group"">
+    @Html.ActionLink(""用户链接"", ""Index"", ""UserConnect"", null, new { @class = ""btn btn-success btn-sm"" })
+    @Html.ActionLink(""用户在线"", ""Index"", ""UserOnline"", null, new { @class = ""btn btn-success btn-sm"" })
+    <label for=""RoleID"" class=""control-label"">角色：</label>
+    @Html.ForDropDownList(""RoleID"", Role.FindAllWithCache().Cast<IEntity>().ToList(), page[""roldId""], ""全部"", true)
+    @Html.ForDropDownList(""p"", VisitStat.FindAllPageName(), page[""p""], ""全部页面"", true)
+</div>*@
+@*@Html.Partial(""_DateRange"")*@";
+#endif
+
+            //var sb = new StringBuilder();
+            //var fact = EntityFactory.CreateOperate(entityType);
+
+            tmp = tmp.Replace("{EntityType}", entityType.Name);
+            tmp = tmp.Replace("{Namespace}", entityType.Namespace);
+
+            //sb.Append(tmp.Substring(p));
+            //tmp = sb.ToString();
+
+            File.WriteAllText(vpath.GetFullPath().EnsureDirectory(true), tmp, Encoding.UTF8);
+
+            return true;
+        }
+
         /// <summary>是否启用多选</summary>
         /// <param name="page"></param>
         /// <returns></returns>
@@ -621,21 +793,9 @@ namespace NewLife.Cube
         public static Boolean EnableSelect(this WebViewPage page)
 #endif
         {
-            // 是否启用多选，仅取决于更新删除权限，不要求必须有唯一主键，方便前端对多主键灵活控制
-            //var fact = page.ViewContext.ViewBag.Factory as IEntityOperate;
-            //var fk = fact?.Unique;
-            //if (fk == null) return false;
-
             if (page.ViewContext.ViewData.TryGetValue("EnableSelect", out var rs)) return (Boolean)rs;
 
             return page.Has(PermissionFlags.Update, PermissionFlags.Delete);
-
-            //var user = page.ViewBag.User as IUser ?? page.User.Identity as IUser;
-            //if (user == null) return false;
-
-            //var menu = page.ViewBag.Menu as IMenu;
-
-            //return user.Has(menu, PermissionFlags.Update, PermissionFlags.Delete);
         }
 
         /// <summary>获取头像地址</summary>
@@ -646,7 +806,9 @@ namespace NewLife.Cube
             if (user == null || user.Avatar.IsNullOrEmpty()) return null;
 
             var set = Setting.Current;
-            var av = set.AvatarPath.CombinePath(user.ID + ".png").GetFullPath();
+            if (set.AvatarPath.IsNullOrEmpty()) return null;
+
+            var av = set.AvatarPath.CombinePath(user.ID + ".png").GetBasePath();
 
             if (File.Exists(av)) return "/Sso/Avatar/" + user.ID;
 
@@ -660,8 +822,14 @@ namespace NewLife.Cube
         {
             if (_IsDevelop != null) return _IsDevelop.Value;
 
-            var fis = ".".AsDirectory().GetFiles("*.csproj", SearchOption.TopDirectoryOnly);
-            _IsDevelop = fis != null && fis.Length > 0;
+            var di = ".".AsDirectory();
+            if (!di.Exists)
+                _IsDevelop = false;
+            else
+            {
+                var fis = di.GetFiles("*.csproj", SearchOption.TopDirectoryOnly);
+                _IsDevelop = fis != null && fis.Length > 0;
+            }
 
             return _IsDevelop.Value;
         }
@@ -678,11 +846,19 @@ namespace NewLife.Cube
             var paths = new[] { "/Content/images/logo/", "/Content/Logo/" };
             foreach (var item in paths)
             {
-                var ico = item.TrimStart("/").AsDirectory().GetAllFiles(name + ".*").FirstOrDefault();
-                if (ico != null && ico.Exists)
+                var p = item.TrimStart("/");
+#if __CORE__
+                p = Setting.Current.WebRootPath.CombinePath(p);
+#endif
+                var di = p.AsDirectory();
+                if (di.Exists)
                 {
-                    logo = item + ico.Name;
-                    break;
+                    var ico = di.GetAllFiles(name + ".*").FirstOrDefault();
+                    if (ico != null && ico.Exists)
+                    {
+                        logo = item + ico.Name;
+                        break;
+                    }
                 }
             }
 

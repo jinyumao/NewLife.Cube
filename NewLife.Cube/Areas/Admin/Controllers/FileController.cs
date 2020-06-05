@@ -35,6 +35,15 @@ namespace NewLife.Cube.Admin.Controllers
 
             // 默认根目录
             var fi = Root.CombinePath(r).AsFile();
+
+            var root = Root.EnsureEnd(Path.DirectorySeparatorChar + "");
+            if (!fi.FullName.StartsWithIgnoreCase(root))
+            {
+                WriteLog("Valid", $"文件[{fi.FullName}]非法越界！", UserHost);
+
+                return null;
+            }
+
             if (!fi.Exists) return null;
 
             return fi;
@@ -46,12 +55,21 @@ namespace NewLife.Cube.Admin.Controllers
 
             // 默认根目录
             var di = Root.CombinePath(r).AsDirectory();
+
+            var root = Root.EnsureEnd(Path.DirectorySeparatorChar + "");
+            if (!di.FullName.StartsWithIgnoreCase(root))
+            {
+                WriteLog("Valid", $"目录[{di.FullName}]非法越界！", UserHost);
+
+                return null;
+            }
+
             if (!di.Exists) return null;
 
             return di;
         }
 
-        private FileItem GetItme(String r)
+        private FileItem GetItem(String r)
         {
             var inf = GetFile(r) as FileSystemInfo ?? GetDirectory(r);
             if (inf == null) return null;
@@ -92,11 +110,6 @@ namespace NewLife.Cube.Admin.Controllers
         {
             var di = GetDirectory(r) ?? Root.AsDirectory();
 
-            // 检查目录越界
-            var root = Root.TrimEnd(Path.DirectorySeparatorChar);
-            if (di == null) di = Root.AsDirectory();
-            if (!di.FullName.StartsWithIgnoreCase(root)) di = Root.AsDirectory();
-
             // 计算当前路径
             var fd = di.FullName;
             if (fd.StartsWith(Root)) fd = fd.Substring(Root.Length);
@@ -109,26 +122,21 @@ namespace NewLife.Cube.Admin.Controllers
             {
                 if (item.Attributes.Has(FileAttributes.Hidden)) continue;
 
-                var fi = GetItme(item.FullName);
+                var fi = GetItem(item.FullName);
 
                 list.Add(fi);
             }
 
             // 排序，目录优先
-            switch (sort)
+            list = sort switch
             {
-                case "size":
-                    list = list.OrderByDescending(e => e.Size).ThenBy(e => e.Name).ToList();
-                    break;
-                case "lastwrite":
-                    list = list.OrderByDescending(e => e.LastWrite).ThenBy(e => e.Name).ToList();
-                    break;
-                case "name":
-                default:
-                    list = list.OrderByDescending(e => e.Directory).ThenBy(e => e.Name).ToList();
-                    break;
-            }
+                "size" => list.OrderByDescending(e => e.Size).ThenBy(e => e.Name).ToList(),
+                "lastwrite" => list.OrderByDescending(e => e.LastWrite).ThenBy(e => e.Name).ToList(),
+                _ => list.OrderByDescending(e => e.Directory).ThenBy(e => e.Name).ToList(),
+            };
+
             // 在开头插入上一级目录
+            var root = Root.TrimEnd(Path.DirectorySeparatorChar);
             if (!di.FullName.EqualIgnoreCase(Root, root))
             {
                 if (di.Parent != null)
@@ -140,7 +148,6 @@ namespace NewLife.Cube.Admin.Controllers
                         FullName = GetFullName(di.Parent.FullName)
                     });
                 }
-
             }
 
             // 剪切板
@@ -161,7 +168,7 @@ namespace NewLife.Cube.Admin.Controllers
             if (fi != null)
             {
                 p = GetFullName(fi.Directory.FullName);
-                WriteLog("删除", fi.FullName ,UserHost);
+                WriteLog("删除", fi.FullName, UserHost);
                 fi.Delete();
             }
             else
@@ -234,16 +241,19 @@ namespace NewLife.Cube.Admin.Controllers
         /// <param name="r"></param>
         /// <param name="file"></param>
         /// <returns></returns>
+        [HttpPost]
         [EntityAuthorize(PermissionFlags.Insert)]
         public ActionResult Upload(String r, IFormFile file)
         {
             if (file != null)
             {
-                var di = GetDirectory(r);
+                var di = GetDirectory(r) ?? Root.AsDirectory();
                 if (di == null) throw new Exception("找不到目录！");
 
                 var dest = di.FullName.CombinePath(file.FileName);
                 WriteLog("上传", dest, UserHost);
+
+                dest.EnsureDirectory(true);
                 System.IO.File.WriteAllBytes(dest, file.OpenReadStream().ReadBytes());
             }
 
@@ -259,11 +269,13 @@ namespace NewLife.Cube.Admin.Controllers
         {
             if (file != null)
             {
-                var di = GetDirectory(r);
+                var di = GetDirectory(r) ?? Root.AsDirectory();
                 if (di == null) throw new Exception("找不到目录！");
 
                 var dest = di.FullName.CombinePath(file.FileName);
                 WriteLog("上传", dest);
+
+                dest.EnsureDirectory(true);
                 file.SaveAs(dest);
             }
 
@@ -282,7 +294,11 @@ namespace NewLife.Cube.Admin.Controllers
 
             WriteLog("下载", fi.FullName, UserHost);
 
+#if __CORE__
+            return PhysicalFile(fi.FullName, "application/octet-stream", fi.Name, true);
+#else
             return File(fi.FullName, "application/octet-stream", fi.Name);
+#endif
         }
         #endregion
 
@@ -290,8 +306,8 @@ namespace NewLife.Cube.Admin.Controllers
         private const String CLIPKEY = "File_Clipboard";
         private List<FileItem> GetClip()
         {
-            var list = GetSession<List<FileItem>>(CLIPKEY);
-            if (list == null) SetSession(CLIPKEY, list = new List<FileItem>());
+            var list = Session[CLIPKEY] as List<FileItem>;
+            if (list == null) Session[CLIPKEY] = list = new List<FileItem>();
 
             return list;
         }
@@ -303,7 +319,7 @@ namespace NewLife.Cube.Admin.Controllers
         [EntityAuthorize(PermissionFlags.Detail)]
         public ActionResult Copy(String r, String f)
         {
-            var fi = GetItme(f);
+            var fi = GetItem(f);
             if (fi == null) throw new Exception("找不到文件或目录！");
 
             var list = GetClip();
@@ -320,7 +336,7 @@ namespace NewLife.Cube.Admin.Controllers
         [EntityAuthorize(PermissionFlags.Detail)]
         public ActionResult CancelCopy(String r, String f)
         {
-            var fi = GetItme(f);
+            var fi = GetItem(f);
             if (fi == null) throw new Exception("找不到文件或目录！");
 
             var list = GetClip();
@@ -391,7 +407,7 @@ namespace NewLife.Cube.Admin.Controllers
         #endregion
 
         #region 日志
-        private static void WriteLog(String action, String remark, String ip = null) => LogProvider.Provider.WriteLog(typeof(FileController), action, remark, ip: ip);
+        private static void WriteLog(String action, String remark, String ip = null) => LogProvider.Provider.WriteLog(typeof(FileController), action, true, remark, ip: ip);
         #endregion
     }
 }

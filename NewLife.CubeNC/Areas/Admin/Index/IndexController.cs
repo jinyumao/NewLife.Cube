@@ -6,25 +6,19 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
-#if __CORE__
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using NewLife.Cube.Extensions;
-#else
-using System.Web;
-using System.Web.Mvc;
-using Microsoft.AspNetCore.Mvc;
-#endif
-
 using NewLife.Common;
+using NewLife.Cube.Extensions;
+using NewLife.Cube.ViewModels;
 using NewLife.Log;
 using NewLife.Reflection;
 using XCode;
 using XCode.Membership;
-using NewLife.Cube.ViewModels;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace NewLife.Cube.Admin.Controllers
@@ -37,60 +31,39 @@ namespace NewLife.Cube.Admin.Controllers
         /// <summary>菜单顺序。扫描是会反射读取</summary>
         protected static Int32 MenuOrder { get; set; } = 10;
 
-#if __CORE__
-        private IManageProvider _provider;
-        private IApplicationLifetime _applicationLifetime { get; set; }
+        private readonly IManageProvider _provider;
+        private readonly IHostApplicationLifetime _applicationLifetime;
 
+        static IndexController() => MachineInfo.RegisterAsync();
 
-
-        private IndexController() { }
+        private IndexController() => PageSetting.EnableNavbar = false;
 
         /// <summary>实例化</summary>
         /// <param name="manageProvider"></param>
-        public IndexController(IManageProvider manageProvider, IApplicationLifetime appLifetime
-            , ILogger<IndexController> logger)
+        /// <param name="appLifetime"></param>
+        /// <param name="logger"></param>
+        public IndexController(IManageProvider manageProvider, IHostApplicationLifetime appLifetime) : this()
         {
             _provider = manageProvider;
             _applicationLifetime = appLifetime;
         }
-#endif
 
         /// <summary>首页</summary>
         /// <returns></returns>
-        //[EntityAuthorize(PermissionFlags.Detail)]
         [AllowAnonymous]
-#if !__CORE__
-        [RequireSsl]
-#endif
         public ActionResult Index()
         {
-#if __CORE__
-            var user = ManagerProviderHelper.TryLogin(_provider, HttpContext.RequestServices);
-#else
-            var user = ManageProvider.Provider.TryLogin();
-#endif
+            var user = _provider.TryLogin(HttpContext);
             if (user == null) return RedirectToAction("Login", "User", new
             {
-#if __CORE__
                 r = Request.GetEncodedPathAndQuery()
-#else
-                r = Request.Url.PathAndQuery
-#endif
             });
 
-#if __CORE__
             ViewBag.User = _provider.Current;
-#else
-            ViewBag.User = ManageProvider.User;
-#endif
             ViewBag.Config = SysConfig.Current;
 
             // 工作台页面
-#if __CORE__
             var startPage = Request.GetRequestValue("page");
-#else
-            var startPage = Request["page"];
-#endif
             if (startPage.IsNullOrEmpty()) startPage = Setting.Current.StartPage;
 
             ViewBag.Main = startPage;
@@ -106,48 +79,62 @@ namespace NewLife.Cube.Admin.Controllers
         [EntityAuthorize(PermissionFlags.Detail)]
         public ActionResult Main(String id)
         {
-            //if (id == "Restart")
-            //{
-            //    HttpRuntime.UnloadAppDomain();
-            //    id = null;
-            //}
-
             ViewBag.Act = id;
-            //ViewBag.User = ManageProvider.User;
             ViewBag.Config = SysConfig.Current;
-#if __CORE__
-            var name = Request.Headers["Server_SoftWare"];
-#else
-            var name = Request.ServerVariables["Server_SoftWare"];
-#endif
-            if (String.IsNullOrEmpty(name)) name = Process.GetCurrentProcess().ProcessName;
-
-#if !__CORE__
-            // 检测集成管道，低版本.Net不支持，请使用者根据情况自行注释
-            try
-            {
-                if (HttpRuntime.UsingIntegratedPipeline) name += " [集成管道]";
-            }
-            catch { }
-#endif
-
-            ViewBag.WebServerName = name;
-            ViewBag.MyAsms = AssemblyX.GetMyAssemblies().OrderBy(e => e.Name).OrderByDescending(e => e.Compile).ToArray();
+            ViewBag.MyAsms = GetMyAssemblies().OrderBy(e => e.Name).OrderByDescending(e => e.Compile).ToArray();
 
             var Asms = AssemblyX.GetAssemblies(null).ToArray();
             Asms = Asms.OrderBy(e => e.Name).OrderByDescending(e => e.Compile).ToArray();
             ViewBag.Asms = Asms;
 
-            //return View();
-            switch ((id + "").ToLower())
+            return ((id + "").ToLower()) switch
             {
-                case "processmodules": return View("ProcessModules");
-                case "assembly": return View("Assembly");
-                case "session": return View("Session");
-                case "cache": return View("Cache");
-                case "servervar": return View("ServerVar");
-                default: return View();
+                "processmodules" => View("ProcessModules"),
+                "assembly" => View("Assembly"),
+                "session" => View("Session"),
+                "cache" => View("Cache"),
+                "servervar" => View("ServerVar"),
+                _ => View(),
+            };
+        }
+
+        /// <summary>获取当前应用程序的所有程序集，不包括系统程序集，仅限本目录</summary>
+        /// <returns></returns>
+        public static List<AssemblyX> GetMyAssemblies()
+        {
+            var list = new List<AssemblyX>();
+            var hs = new HashSet<String>(StringComparer.OrdinalIgnoreCase);
+            var cur = AppDomain.CurrentDomain.BaseDirectory;
+            foreach (var asmx in AssemblyX.GetAssemblies())
+            {
+                // 加载程序集列表很容易抛出异常，全部屏蔽
+                try
+                {
+                    if (asmx.FileVersion.IsNullOrEmpty()) continue;
+
+                    var file = asmx.Asm.CodeBase;
+                    if (file.IsNullOrEmpty()) file = asmx.Asm.Location;
+                    if (file.IsNullOrEmpty()) continue;
+
+                    if (file.StartsWith("file:///"))
+                    {
+                        file = file.TrimStart("file:///");
+                        if (Path.DirectorySeparatorChar == '\\')
+                            file = file.Replace('/', '\\');
+                        else
+                            file = file.Replace('\\', '/').EnsureStart("/");
+                    }
+                    if (!file.StartsWithIgnoreCase(cur)) continue;
+
+                    if (!hs.Contains(file))
+                    {
+                        hs.Add(file);
+                        list.Add(asmx);
+                    }
+                }
+                catch { }
             }
+            return list;
         }
 
         /// <summary>重启</summary>
@@ -156,8 +143,9 @@ namespace NewLife.Cube.Admin.Controllers
         [EntityAuthorize((PermissionFlags)16)]
         public ActionResult Restart()
         {
-            _applicationLifetime.StopApplication();
-            return RedirectToAction(nameof(Main));
+            ApplicationManager.Load().Restart();
+            //_applicationLifetime.StopApplication();  
+            return JsonRefresh("重启成功", 2);
         }
 
         /// <summary>
@@ -183,8 +171,9 @@ namespace NewLife.Cube.Admin.Controllers
 
             return RedirectToAction(nameof(Main));
         }
+
         [DllImport("kernel32.dll")]
-        static extern Boolean SetProcessWorkingSetSize(IntPtr proc, Int32 min, Int32 max);
+        extern static Boolean SetProcessWorkingSetSize(IntPtr proc, Int32 min, Int32 max);
 
         /// <summary>
         /// 获取菜单树
@@ -195,11 +184,7 @@ namespace NewLife.Cube.Admin.Controllers
         {
             var user = _provider.Current as IUser ?? XCode.Membership.UserX.FindAll().FirstOrDefault();
 
-            //var fact = ObjectContainer.Current.Resolve<IMenuFactory>();
             var fact = ManageProvider.Menu;
-            //fact.FindByID(1);
-            //(fact as IEntityOperate)?.FindByKey(1);
-
             var menus = fact.Root.Childs;
             if (user?.Role != null)
             {
@@ -242,7 +227,7 @@ namespace NewLife.Cube.Admin.Controllers
             if (menu.Visible)
             {
                 menu.Visible = false;
-                (menu as IEntity).Save();
+                (menu as IEntity).Update();
             }
 
             return base.ScanActionMenu(menu);

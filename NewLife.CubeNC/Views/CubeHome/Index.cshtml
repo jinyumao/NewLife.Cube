@@ -3,8 +3,6 @@
 @{
     Layout = null;
     var page = "/";
-        //NewLife.Web.HttpContext.Current.Request.Host.ToString();
-    //var page = HttpRuntime.AppDomainAppVirtualPath;
     page = page.EnsureEnd("/") + "Admin";
 }
 
@@ -23,4 +21,5 @@
         @SysConfig.Current.Company
     </div>
 </body>
+@await Html.PartialAsync("_Footer")
 </html>

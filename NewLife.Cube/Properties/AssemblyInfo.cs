@@ -12,7 +12,7 @@ using NewLife.Cube;
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyProduct("NewLife.Cube")]
 [assembly: AssemblyCompany("新生命开发团队")]
-[assembly: AssemblyCopyright("©2002-2018 新生命开发团队 https://github.com/NewLifeX/NewLife.Cube")]
+[assembly: AssemblyCopyright("©2002-2020 NewLife")]
 [assembly: AssemblyTrademark("四叶草")]
 [assembly: AssemblyCulture("")]
 
@@ -36,10 +36,22 @@ using NewLife.Cube;
 //
 // 可以指定所有这些值，也可以使用“修订号”和“内部版本号”的默认值，
 // 方法是按如下所示使用“*”:
-[assembly: AssemblyVersion("2.8.*")]
-[assembly: AssemblyFileVersion("2.8.2019.0707")]
+[assembly: AssemblyVersion("3.4.*")]
+[assembly: AssemblyFileVersion("3.4.2020.0525")]
 
 /*
+ * v3.4.2020.0519   支持JWT
+ * 
+ * v3.3.2020.0308   支持ECharts图表，支持钉钉登录，新增页面数据分享
+ * 
+ * v3.2.2020.0204   支持数据权限、用户部门地区选择、用户分享令牌授权
+ * 
+ * v3.1.2020.0115   X组件内部目录统一使用BasePath，支持命令行参数与环境变量，便于函数计算
+ * 
+ * v3.0.2019.1212   独立发布netcore版本魔方，并作为主线维护
+ * 
+ * v2.9.2019.1110   优化单点登录和Csv导出，界面调整
+ * 
  * v2.8.2019.0623   增加Csv导出
  * 
  * v2.8.2019.0602   支持备份与恢复数据

@@ -1,4 +1,4 @@
-﻿//assembly=..\Src\DLL\NuGet.exe
+﻿//assembly=DLL\NuGet.exe
 //assembly=System.ComponentModel.DataAnnotations
 using System;
 using System.Collections.Generic;
@@ -21,7 +21,7 @@ namespace NewLife.Reflection
             XTrace.UseConsole();
 			
 			// 查找NuGet.exe
-			var ng = "..\\..\\Src\\DLL\\NuGet.exe".GetFullPath();
+			var ng = "..\\..\\X\\DLL\\NuGet.exe".GetFullPath();
 			
             //"cmd".Run("/c del *.nuspec /f/q");
 			foreach(var item in ".".AsDirectory().GetAllFiles("*.nuspec"))
@@ -101,8 +101,8 @@ namespace NewLife.Reflection
             {
                 AddFile(cfg, name, "dll;xml;pdb;exe", @"..\..\Bin", @"lib\net45");
                 AddFile(cfg, name, "dll;xml;pdb;exe", @"..\..\Bin4", @"lib\net40");
-                AddFile(cfg, name, "dll;xml;pdb;exe", @"..\Bin\netcoreapp2.1", @"lib\netcoreapp2.1");
-                AddFile(cfg, name + ".Views", "dll;xml;pdb;exe", @"..\Bin\netcoreapp2.1", @"lib\netcoreapp2.1");
+                AddFile(cfg, name, "dll;xml;pdb;exe", @"..\Bin\netcoreapp3.0", @"lib\netcoreapp3.0");
+                AddFile(cfg, name + ".Views", "dll;xml;pdb;exe", @"..\Bin\netcoreapp3.0", @"lib\netcoreapp3.0");
 
                 if (name == "XCode") AddFile(cfg, null, "*.ps1", @"tools", @"tools");
             }
@@ -147,7 +147,7 @@ namespace NewLife.Reflection
                 case "net40": dg.TargetFramework = ".NETFramework4.0"; break;
                 case "net45": dg.TargetFramework = ".NETFramework4.5"; break;
                 case "netstandard2.0": dg.TargetFramework = ".NETStandard2.0"; break;
-                case "netcoreapp2.1": dg.TargetFramework = "netcoreapp2.1"; break;
+                case "netcoreapp3.0": dg.TargetFramework = "netcoreapp3.0"; break;
             }
 
             dg.Dependencies = new List<ManifestDependency>();

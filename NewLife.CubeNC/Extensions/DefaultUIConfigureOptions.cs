@@ -1,11 +1,13 @@
 ﻿using System;
 using System.IO;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using NewLife.Log;
 
 namespace NewLife.Cube.Extensions
 {
@@ -14,13 +16,13 @@ namespace NewLife.Cube.Extensions
     {
         /// <summary>实例化</summary>
         /// <param name="environment"></param>
-        public DefaultUIConfigureOptions(IHostingEnvironment environment)
+        public DefaultUIConfigureOptions(IWebHostEnvironment environment)
         {
             Environment = environment;
         }
 
         /// <summary>环境</summary>
-        public IHostingEnvironment Environment { get; }
+        public IWebHostEnvironment Environment { get; }
 
         /// <summary>提交配置</summary>
         /// <param name="name"></param>
@@ -41,7 +43,7 @@ namespace NewLife.Cube.Extensions
 
             // 添加我们的文件提供者
             // 第二个参数指定开始查找的文件夹，比如文件都放在wwwroot，就填“wwwroot”
-            var filesProvider = new ManifestEmbeddedFileProvider(GetType().Assembly, "wwwroot");
+            var filesProvider = new ManifestEmbeddedFileProvider(GetType().Assembly, Setting.Current.WebRootPath);
             options.FileProvider = new CompositeFileProvider(options.FileProvider, filesProvider);
         }
     }
@@ -51,19 +53,27 @@ namespace NewLife.Cube.Extensions
     {
         /// <summary>添加魔方UI</summary>
         /// <param name="services"></param>
-        public static void AddCubeDefaultUI(this IServiceCollection services, Microsoft.AspNetCore.Hosting.IHostingEnvironment env)
+        /// <param name="env"></param>
+        public static void AddCubeDefaultUI(this IServiceCollection services, IWebHostEnvironment env)
         {
+            env.ContentRootPath = ".".GetFullPath();
+
             //services.ConfigureOptions<DefaultUIConfigureOptions>();
-            var root = env.WebRootPath;
-            if (!Directory.Exists(root.CombinePath("Content")))
+            //var root = env.WebRootPath;
+            //XTrace.WriteLine("WebRootPath={0}", root);
+            //if (!Directory.Exists(root.CombinePath("Content")))
+            //{
+            var root = Setting.Current.WebRootPath.GetFullPath();
+            if (Directory.Exists(root))
             {
-                root = "wwwroot".GetFullPath();
-                if (Directory.Exists(root))
-                {
-                    env.WebRootPath = root;
-                    env.WebRootFileProvider = new PhysicalFileProvider(root);
-                }
+                XTrace.WriteLine("WebRootPath={0}", root);
+
+                env.WebRootPath = root;
+                env.WebRootFileProvider = new PhysicalFileProvider(root);
             }
+            //}
+
+            //XTrace.WriteLine("ContentRootPath={0}", env.ContentRootPath);
         }
     }
 }

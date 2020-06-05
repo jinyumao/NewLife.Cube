@@ -9,12 +9,12 @@ using NewLife.Cube.Entity;
 using NewLife.Web;
 using XCode;
 using XCode.Membership;
+using System.Web;
 #if __CORE__
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using NewLife.Cube.Extensions;
 #else
-using System.Web;
 using System.Web.Mvc;
 using System.Web.Security;
 #endif
@@ -22,6 +22,7 @@ using System.Web.Security;
 namespace NewLife.Cube.Admin.Controllers
 {
     /// <summary>用户控制器</summary>
+    [DataPermission(null, "ID={#userId}")]
     [DisplayName("用户")]
     [Description("系统基于角色授权，每个角色对不同的功能模块具备添删改查以及自定义权限等多种权限设定。")]
     [Area("Admin")]
@@ -53,9 +54,17 @@ namespace NewLife.Cube.Admin.Controllers
                 if (entity != null) list.Add(entity);
                 return list;
             }
-            p.RetrieveState = true;
 
-            return UserX.Search(p["Q"], p["RoleID"].ToInt(-1), null, p["dtStart"].ToDateTime(), p["dtEnd"].ToDateTime(), p);
+            var roleId = p["roleId"].ToInt(-1);
+            var departmentId = p["departmentId"].ToInt(-1);
+            var enable = p["enable"]?.ToBoolean();
+            var start = p["dtStart"].ToDateTime();
+            var end = p["dtEnd"].ToDateTime();
+
+            //p.RetrieveState = true;
+
+            //return UserX.Search(p["Q"], p["RoleID"].ToInt(-1), enable, start, end, p);
+            return UserX.Search(roleId, departmentId, enable, start, end, p["q"], p);
         }
 
         /// <summary>表单页视图。</summary>
@@ -87,25 +96,39 @@ namespace NewLife.Cube.Admin.Controllers
             }
 
             // 如果禁用本地登录，且只有一个第三方登录，直接跳转，构成单点登录
-            if (!Setting.Current.AllowLogin)
+            var ms = OAuthConfig.Current.Items?.Where(e => !e.AppID.IsNullOrEmpty()).ToList();
+            if (ms != null && !Setting.Current.AllowLogin)
             {
-                var ms = OAuthConfig.Current.Items.Where(e => !e.AppID.IsNullOrEmpty()).ToList();
                 if (ms.Count == 0) throw new Exception("禁用了本地密码登录，且没有配置第三方登录");
 
                 // 只有一个，跳转
                 if (ms.Count == 1)
                 {
-                    //var url = $"~/Sso/Login?name={ms[0].Name}";
-                    //if (!returnUrl.IsNullOrEmpty()) url += "&r=" + HttpUtility.UrlEncode(returnUrl);
+                    var url = $"~/Sso/Login?name={ms[0].Name}";
+                    if (!returnUrl.IsNullOrEmpty()) url += "&r=" + HttpUtility.UrlEncode(returnUrl);
 
-                    //return Redirect(url);
+                    return Redirect(url);
+                }
+            }
 
-                    return RedirectToAction("Login", "Sso", new { area = "", name = ms[0].Name, r = returnUrl });
+            // 支持钉钉，且在钉钉内打开，直接跳转
+            if (ms != null && ms.Any(e => e.Name == "Ding"))
+            {
+#if __CORE__
+                var agent = Request.Headers["User-Agent"] + "";
+#else
+                var agent = Request.UserAgent;
+#endif
+                if (!agent.IsNullOrEmpty() && agent.Contains("DingTalk"))
+                {
+                    var url = $"~/Sso/Login?name=Ding";
+                    if (!returnUrl.IsNullOrEmpty()) url += "&r=" + HttpUtility.UrlEncode(returnUrl);
+
+                    return Redirect(url);
                 }
             }
 
             ViewBag.IsShowTip = UserX.Meta.Count == 1;
-
             ViewBag.ReturnUrl = returnUrl;
 
             return View();
@@ -143,8 +166,10 @@ namespace NewLife.Cube.Admin.Controllers
             {
                 ModelState.AddModelError("", ex.Message);
             }
+
             //云飞扬2019-02-15修改，密码错误后会走到这，需要给ViewBag.IsShowTip重赋值，否则抛异常
             ViewBag.IsShowTip = UserX.Meta.Count == 1;
+
             return View();
         }
 
@@ -155,15 +180,19 @@ namespace NewLife.Cube.Admin.Controllers
         {
             var returnUrl = GetRequest("r");
 
-            // 如果是单点登录，则走单点登录注销
-            var name = GetSession<String>("Cube_Sso");
-            if (!name.IsNullOrEmpty()) return RedirectToRoute("Cube", new
+            var set = Setting.Current;
+            if (set.LogoutAll)
             {
-                controller = "Sso",
-                action = "Logout",
-                name,
-                r = returnUrl
-            });
+                // 如果是单点登录，则走单点登录注销
+                var name = Session["Cube_Sso"] as String;
+                if (!name.IsNullOrEmpty()) return Redirect($"~/Sso/Logout?name={name}&r={HttpUtility.UrlEncode(returnUrl)}");
+                //if (!name.IsNullOrEmpty()) return RedirectToAction("Logout", "Sso", new
+                //{
+                //    area = "",
+                //    name,
+                //    r = returnUrl
+                //});
+            }
 
             ManageProvider.Provider.Logout();
 
@@ -239,18 +268,24 @@ namespace NewLife.Cube.Admin.Controllers
 
             try
             {
-                if (String.IsNullOrEmpty(email)) throw new ArgumentNullException("email", "邮箱地址不能为空！");
+                //if (String.IsNullOrEmpty(email)) throw new ArgumentNullException("email", "邮箱地址不能为空！");
                 if (String.IsNullOrEmpty(username)) throw new ArgumentNullException("username", "用户名不能为空！");
                 if (String.IsNullOrEmpty(password)) throw new ArgumentNullException("password", "密码不能为空！");
                 if (String.IsNullOrEmpty(password2)) throw new ArgumentNullException("password2", "重复密码不能为空！");
                 if (password != password2) throw new ArgumentOutOfRangeException("password2", "两次密码必须一致！");
 
-                var user = new UserX()
+                // 去重判断
+                var user = UserX.FindByName(username);
+                if (user != null) throw new ArgumentException("username", $"用户[{username}]已存在！");
+
+                var r = Role.GetOrAdd(set.DefaultRole);
+
+                user = new UserX()
                 {
                     Name = username,
-                    Password = password.MD5(),
+                    Password = password,
                     Mail = email,
-                    RoleID = set.DefaultRole,
+                    RoleID = r.ID,
                     Enable = true
                 };
                 user.Register();
@@ -286,19 +321,13 @@ namespace NewLife.Cube.Admin.Controllers
         /// <param name="keys"></param>
         /// <returns></returns>
         [EntityAuthorize(PermissionFlags.Update)]
-        public ActionResult EnableSelect(String keys)
-        {
-            return EnableOrDisableSelect();
-        }
+        public ActionResult EnableSelect(String keys) => EnableOrDisableSelect();
 
         /// <summary>批量禁用</summary>
         /// <param name="keys"></param>
         /// <returns></returns>
         [EntityAuthorize(PermissionFlags.Update)]
-        public ActionResult DisableSelect(String keys)
-        {
-            return EnableOrDisableSelect(false);
-        }
+        public ActionResult DisableSelect(String keys) => EnableOrDisableSelect(false);
 
         private ActionResult EnableOrDisableSelect(Boolean isEnable = true)
         {
@@ -306,17 +335,17 @@ namespace NewLife.Cube.Admin.Controllers
             var ids = GetRequest("keys").SplitAsInt();
             if (ids.Length > 0)
             {
-                Parallel.ForEach(ids, id =>
+                foreach (var id in ids)
                 {
                     var user = UserX.FindByID(id);
                     if (user != null && user.Enable != isEnable)
                     {
                         user.Enable = isEnable;
-                        user.Save();
+                        user.Update();
 
                         Interlocked.Increment(ref count);
                     }
-                });
+                }
             }
 
             return JsonRefresh("共{1}[{0}]个用户".F(count, isEnable ? "启用" : "禁用"));

@@ -67,7 +67,7 @@ namespace ASP
             
             #line 5 "..\..\Areas\School\Views\Student\_List_Search.cshtml"
   
-    var fact = ViewBag.Factory as IEntityOperate;
+    var fact = ViewBag.Factory as IEntityFactory;
     var page = ViewBag.Page as Pager;
 
             
@@ -89,7 +89,7 @@ WriteLiteral("    ");
 
             
             #line 11 "..\..\Areas\School\Views\Student\_List_Search.cshtml"
-Write(Html.ForDropDownList("ClassID", Class.FindAllWithCache().Cast<IEntity>().ToList(), "全部", true));
+Write(Html.ForDropDownList("ClassID", Class.FindAllWithCache(), page["classId"], "全部", true));
 
             
             #line default

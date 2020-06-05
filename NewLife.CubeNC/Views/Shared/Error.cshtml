@@ -1,0 +1,43 @@
+﻿@model ExceptionContext;
+@using Microsoft.AspNetCore.Mvc.Filters
+@{
+    //Layout = "_Ace_Layout.cshtml";
+    Layout = "_Layout.cshtml";
+    //Layout = NewLife.Cube.Setting.Current.Layout;
+    ViewBag.Title = "处理你的请求时出错";
+
+    //var ex = ViewBag.Exception ?? (Model == null ? null : Model.Exception);
+    Exception ex = null;
+
+    var info = "";
+    var error = "没有捕捉到异常信息";
+    var context = Model ?? this.Context.Items["ExceptionContext"] as ExceptionContext;
+    if (context != null && context.Exception != null)
+    {
+        // 由于nginx的配置导致出现奇葩错误
+        ex = context.Exception;
+        info = context.ActionDescriptor?.DisplayName;
+    }
+    if (NewLife.Cube.Setting.Current.Debug)
+    {
+        error = ex + "";
+    }
+    else
+    {
+        error = ex?.GetTrue().Message;
+    }
+    error = error?.Replace("--->", "--->" + Environment.NewLine);
+}
+<div class="panel panel-default">
+    <div class="panel-body">
+        <strong>
+            <pre class="info">@info</pre>
+        </strong>
+        <strong>
+            <pre class="alert alert-danger" role="alert">@error</pre>
+        </strong>
+    </div>
+    <div class="panel-footer">
+        <a href="javascript: history.go(-1);" class="btn btn-info">返回上一页</a>
+    </div>
+</div>

@@ -17,9 +17,8 @@
     },
     "CubeDemoNC": {
       "commandName": "Project",
-      "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "urls": "http://*:5000;https://*:5001"
       },
       "applicationUrl": "http://localhost:5000"
     }

@@ -60,7 +60,7 @@ namespace ASP
             
             #line 4 "..\..\Areas\Admin\Views\User\_List_Search.cshtml"
   
-    var fact = ViewBag.Factory as IEntityOperate;
+    var fact = ViewBag.Factory as IEntityFactory;
     var page = ViewBag.Page as Pager;
 
             
@@ -76,7 +76,7 @@ WriteLiteral("    ");
 
             
             #line 9 "..\..\Areas\Admin\Views\User\_List_Search.cshtml"
-Write(Html.ActionLink("用户链接", "Index", "UserConnect", null, new { @class = "btn btn-success btn-sm" }));
+Write(Html.ActionLink("用户令牌", "Index", "UserToken", null, new { @class = "btn btn-success btn-sm" }));
 
             
             #line default
@@ -87,6 +87,17 @@ WriteLiteral("    ");
 
             
             #line 10 "..\..\Areas\Admin\Views\User\_List_Search.cshtml"
+Write(Html.ActionLink("用户链接", "Index", "UserConnect", null, new { @class = "btn btn-success btn-sm" }));
+
+            
+            #line default
+            #line hidden
+WriteLiteral("\r\n");
+
+WriteLiteral("    ");
+
+            
+            #line 11 "..\..\Areas\Admin\Views\User\_List_Search.cshtml"
 Write(Html.ActionLink("用户在线", "Index", "UserOnline", null, new { @class = "btn btn-success btn-sm" }));
 
             
@@ -94,7 +105,7 @@ Write(Html.ActionLink("用户在线", "Index", "UserOnline", null, new { @class 
             #line hidden
 WriteLiteral("\r\n    <label");
 
-WriteLiteral(" for=\"RoleID\"");
+WriteLiteral(" for=\"roleId\"");
 
 WriteLiteral(" class=\"control-label\"");
 
@@ -103,13 +114,31 @@ WriteLiteral(">角色：</label>\r\n");
 WriteLiteral("    ");
 
             
-            #line 12 "..\..\Areas\Admin\Views\User\_List_Search.cshtml"
-Write(Html.ForDropDownList("RoleID", Role.FindAllWithCache().Cast<IEntity>().ToList(), "全部", true));
+            #line 13 "..\..\Areas\Admin\Views\User\_List_Search.cshtml"
+Write(Html.ForDropDownList("roleId", Role.FindAllWithCache(), page["roleId"], "全部", true));
 
             
             #line default
             #line hidden
 WriteLiteral("\r\n</div>\r\n");
+
+            
+            #line 15 "..\..\Areas\Admin\Views\User\_List_Search.cshtml"
+Write(Html.Partial("_Enable"));
+
+            
+            #line default
+            #line hidden
+WriteLiteral("\r\n");
+
+            
+            #line 16 "..\..\Areas\Admin\Views\User\_List_Search.cshtml"
+Write(Html.Partial("_SelectDepartment", "departmentId"));
+
+            
+            #line default
+            #line hidden
+WriteLiteral("\r\n");
 
         }
     }

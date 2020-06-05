@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
+using Microsoft.AspNetCore.Mvc;
 using NewLife.Cube.Entity;
 using NewLife.Web;
 using XCode;
@@ -11,15 +12,17 @@ using XCode.Membership;
 namespace NewLife.Cube.Admin.Controllers
 {
     /// <summary>用户令牌控制器</summary>
+    [DataPermission(null, "UserID={#userId}")]
     [DisplayName("用户令牌")]
-    [Description("授权其他人直接拥有指定用户的身份，支持有效期，支持数据接口")]
+    [Description("授权指定用户访问接口数据，支持有效期")]
+    [Area("Admin")]
     public class UserTokenController : EntityController<UserToken>
     {
         static UserTokenController()
         {
             MenuOrder = 40;
 
-            FormFields.RemoveField("UserID");
+            //FormFields.RemoveField("UserID");
         }
 
         /// <summary>搜索数据集</summary>
@@ -29,6 +32,9 @@ namespace NewLife.Cube.Admin.Controllers
         {
             var token = p["Q"];
             var userid = p["UserID"].ToInt(-1);
+            var enable = p["enable"]?.ToBoolean();
+            var start = p["dtStart"].ToDateTime();
+            var end = p["dtEnd"].ToDateTime();
 
             // 强制当前用户
             if (userid < 0)
@@ -37,7 +43,7 @@ namespace NewLife.Cube.Admin.Controllers
                 if (!user.Roles.Any(e => e.IsSystem)) userid = user.ID;
             }
 
-            return UserToken.Search(token, userid, null, p["dtStart"].ToDateTime(), p["dtEnd"].ToDateTime(), p);
+            return UserToken.Search(token, userid, enable, start, end, p);
         }
 
         /// <summary>验证权限</summary>

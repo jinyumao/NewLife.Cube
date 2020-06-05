@@ -35,7 +35,7 @@ namespace NewLife.Cube.Admin.Controllers
         public ActionResult Index()
         {
             var list = new List<DbItem>();
-            var dir = XCode.Setting.Current.BackupPath.AsDirectory();
+            var dir = NewLife.Setting.Current.BackupPath.GetBasePath().AsDirectory();
 
             // 读取配置文件
             foreach (var item in DAL.ConnStrs.ToArray())
@@ -65,51 +65,6 @@ namespace NewLife.Cube.Admin.Controllers
             }
 
             return View("Index", list);
-        }
-
-        /// <summary>持久化连接</summary>
-        /// <param name="name"></param>
-        /// <returns></returns>
-        [EntityAuthorize(PermissionFlags.Update)]
-        public ActionResult SetStatic(String name)
-        {
-#if !__CORE__
-            // 读取配置文件
-            var css = ConfigurationManager.ConnectionStrings;
-            var conns = new HashSet<String>(StringComparer.OrdinalIgnoreCase);
-            foreach (ConnectionStringSettings set in css)
-            {
-                if (!conns.Contains(set.Name)) conns.Add(set.Name);
-            }
-
-            var msg = "";
-            if (!DAL.ConnStrs.ContainsKey(name))
-                msg = "找不到连接{0}".F(name);
-            else if (conns.Contains(name))
-                msg = "连接 {0} 已经存在于配置文件".F(name);
-            else
-            {
-                try
-                {
-                    var dal = DAL.Create(name);
-                    var set = new ConnectionStringSettings(name, dal.ConnStr);
-                    //css.Add(set);
-
-                    var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                    config.ConnectionStrings.ConnectionStrings.Add(set);
-                    config.Save();
-
-                    msg = "持久化连接 {0} 成功".F(name);
-                }
-                catch (Exception ex)
-                {
-                    msg = "持久化连接 {0} 失败 {1}".F(name, ex.Message);
-                }
-            }
-
-            //Js.Alert(msg);
-#endif
-            return Index();
         }
 
         /// <summary>备份数据库</summary>
@@ -157,7 +112,7 @@ namespace NewLife.Cube.Admin.Controllers
         }
 
         #region 日志
-        private static void WriteLog(String action, String remark, String ip = null) => LogProvider.Provider.WriteLog(typeof(DbController), action, remark, ip: ip);
+        private static void WriteLog(String action, String remark, String ip = null) => LogProvider.Provider.WriteLog(typeof(DbController), action, true, remark, ip: ip);
         #endregion
     }
 }

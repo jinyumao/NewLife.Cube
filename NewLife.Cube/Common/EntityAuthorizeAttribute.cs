@@ -84,16 +84,11 @@ namespace NewLife.Cube
             var ctx = httpContext;
 
             // 判断当前登录用户
-            var user = prv.TryLogin();
+            var user = prv.TryLogin(ctx.ApplicationInstance.Context);
             if (user == null) return false;
 
-            var menu = ctx.Items["CurrentMenu"] as IMenu;
-
             // 判断权限
-            if (menu != null && user is IUser user2)
-            {
-                if (user2.Has(menu, Permission)) return true;
-            }
+            if (ctx.Items["CurrentMenu"] is IMenu menu && user is IUser user2 && user2.Has(menu, Permission)) return true;
 
             return false;
         }
@@ -113,8 +108,36 @@ namespace NewLife.Cube
             }
             else
             {
-                filterContext.Result = filterContext.NoPermission(Permission);
+                filterContext.Result = NoPermission(filterContext, Permission);
             }
+        }
+
+        /// <summary>无权访问</summary>
+        /// <param name="filterContext"></param>
+        /// <param name="pm"></param>
+        /// <returns></returns>
+        public static ActionResult NoPermission(AuthorizationContext filterContext, PermissionFlags pm)
+        {
+            var act = filterContext.ActionDescriptor;
+            var ctrl = act.ControllerDescriptor;
+
+            var ctx = filterContext.HttpContext;
+
+            var res = "[{0}/{1}]".F(ctrl.ControllerName, act.ActionName);
+            var msg = "访问资源 {0} 需要 {1} 权限".F(res, pm.GetDescription());
+            LogProvider.Provider.WriteLog("访问", "拒绝", false, msg, ip: ctx.GetUserHost());
+
+            var menu = ctx.Items["CurrentMenu"] as IMenu;
+
+            var vr = new ViewResult()
+            {
+                ViewName = "NoPermission"
+            };
+            vr.ViewBag.Context = filterContext;
+            vr.ViewBag.Resource = res;
+            vr.ViewBag.Permission = pm;
+            vr.ViewBag.Menu = menu;
+            return vr;
         }
 
         private IMenu GetMenu(AuthorizationContext filterContext, Boolean create)
@@ -176,7 +199,7 @@ namespace NewLife.Cube
             if (root != null)
             {
                 root.Url = "~";
-                (root as IEntity).Save();
+                (root as IEntity).Update();
             }
 
             // 遍历菜单，设置权限项
@@ -189,7 +212,6 @@ namespace NewLife.Cube
                 if (ctype == null) continue;
 
                 // 添加该类型下的所有Action
-                var dic = new Dictionary<MethodInfo, Int32>();
                 foreach (var method in ctype.GetMethods())
                 {
                     if (method.IsStatic || !method.IsPublic) continue;
@@ -208,7 +230,7 @@ namespace NewLife.Cube
 
                 controller.Url = "~/" + ctype.Name.TrimEnd("Controller");
 
-                (controller as IEntity).Save();
+                (controller as IEntity).Update();
             }
 
             return true;

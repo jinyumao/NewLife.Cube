@@ -23,6 +23,8 @@ namespace NewLife.Cube.Admin.Controllers
         /// <summary>菜单顺序。扫描是会反射读取</summary>
         protected static Int32 MenuOrder { get; set; } = 10;
 
+        static IndexController() => MachineInfo.RegisterAsync();
+
         /// <summary>实例化</summary>
         public IndexController() => PageSetting.EnableNavbar = false;
 
@@ -33,7 +35,7 @@ namespace NewLife.Cube.Admin.Controllers
         [RequireSsl]
         public ActionResult Index()
         {
-            var user = ManageProvider.Provider.TryLogin();
+            var user = ManageProvider.Provider.TryLogin(HttpContext.ApplicationInstance.Context);
             if (user == null) return RedirectToAction("Login", "User", new { r = Request.Url.PathAndQuery });
 
             ViewBag.User = ManageProvider.User;
@@ -55,14 +57,7 @@ namespace NewLife.Cube.Admin.Controllers
         [EntityAuthorize(PermissionFlags.Detail)]
         public ActionResult Main(String id)
         {
-            //if (id == "Restart")
-            //{
-            //    HttpRuntime.UnloadAppDomain();
-            //    id = null;
-            //}
-
             ViewBag.Act = id;
-            //ViewBag.User = ManageProvider.User;
             ViewBag.Config = SysConfig.Current;
 
             var name = Request.ServerVariables["Server_SoftWare"];
@@ -90,6 +85,7 @@ namespace NewLife.Cube.Admin.Controllers
                 case "session": return View("Session");
                 case "cache": return View("Cache");
                 case "servervar": return View("ServerVar");
+                case "memoryfree": return View("MemoryFree");
                 default: return View();
             }
         }
@@ -100,12 +96,6 @@ namespace NewLife.Cube.Admin.Controllers
         [EntityAuthorize((PermissionFlags)16)]
         public ActionResult Restart()
         {
-            //System.Web.HttpContext.Current.User = null;
-            //try
-            //{
-            //    Process.GetCurrentProcess().Kill();
-            //}
-            //catch { }
             //try
             {
                 //AppDomain.Unload(AppDomain.CurrentDomain);
@@ -156,7 +146,7 @@ namespace NewLife.Cube.Admin.Controllers
             if (menu.Visible)
             {
                 menu.Visible = false;
-                (menu as IEntity).Save();
+                (menu as IEntity).Update();
             }
 
             return base.ScanActionMenu(menu);

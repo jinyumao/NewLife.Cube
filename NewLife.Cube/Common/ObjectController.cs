@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text;
 using NewLife.Reflection;
 using XCode.Membership;
+using System.Collections.Generic;
 #if __CORE__
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -43,10 +44,24 @@ namespace NewLife.Cube
 
             var txt = "";
             if (txt.IsNullOrEmpty()) txt = (ViewBag.Menu as IMenu)?.Remark;
+            if (txt.IsNullOrEmpty()) txt = (HttpContext.Items["CurrentMenu"] as IMenu)?.Remark;
             if (txt.IsNullOrEmpty()) txt = des;
             ViewBag.HeaderContent = txt;
 
-            if (Value != null) ViewBag.Properties = GetMembers(Value);
+            if (Value != null)
+            {
+                var pis = GetMembers(Value);
+                var dic = new Dictionary<String, List<PropertyInfo>>();
+                foreach (var pi in pis)
+                {
+                    var cat = pi.GetCustomAttribute<CategoryAttribute>();
+                    var category = cat?.Category ?? "";
+                    if (!dic.TryGetValue(category, out var list)) dic[category] = list = new List<PropertyInfo>();
+
+                    list.Add(pi);
+                }
+                ViewBag.Properties = dic;
+            }
         }
 
         /// <summary>执行后</summary>
@@ -107,7 +122,7 @@ namespace NewLife.Cube
             if (Request.IsAjaxRequest())
                 return Json(new { result = "success", content = "保存成功" });
             else
-                return View("ObjectForm", obj);
+                return Redirect("Index");
         }
 
         Boolean GetBool(String name)
@@ -149,7 +164,7 @@ namespace NewLife.Cube
                     sb.AppendFormat("{0}:{1}=>{2}", name, v2, v1);
                 }
             }
-            LogProvider.Provider.WriteLog(obj.GetType(), "修改", sb.ToString(), ip: ip);
+            LogProvider.Provider.WriteLog(obj.GetType(), "修改", true, sb.ToString(), ip: ip);
         }
 
         /// <summary>获取要显示编辑的成员</summary>

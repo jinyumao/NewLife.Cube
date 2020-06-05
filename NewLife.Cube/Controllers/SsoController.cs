@@ -7,8 +7,11 @@ using NewLife.Log;
 using NewLife.Model;
 using NewLife.Web;
 using XCode.Membership;
+using NewLife.Remoting;
+using NewLife.Collections;
 #if __CORE__
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 #else
 using System.Web;
@@ -53,15 +56,25 @@ namespace NewLife.Cube.Controllers
         /// <summary>单点登录服务端</summary>
         public static OAuthServer OAuth { get; set; }
 
+        /// <summary>存储最近用过的code，避免用户刷新页面</summary>
+        private static DictionaryCache<String, String> _codeCache = new DictionaryCache<string, string>()
+        {
+            Expire = 600,
+            Period = 60
+        };
+
         static SsoController()
         {
             // 注册单点登录
-            var oc = ObjectContainer.Current;
-            oc.AutoRegister<SsoProvider, SsoProvider>();
-            oc.AutoRegister<OAuthServer, OAuthServer2>();
+            //var oc = ObjectContainer.Current;
+            //oc.AutoRegister<SsoProvider, SsoProvider>();
+            //oc.AutoRegister<OAuthServer, OAuthServer2>();
 
-            Provider = ObjectContainer.Current.ResolveInstance<SsoProvider>();
-            OAuth = ObjectContainer.Current.ResolveInstance<OAuthServer>();
+            //Provider = ObjectContainer.Current.ResolveInstance<SsoProvider>();
+            //OAuth = ObjectContainer.Current.ResolveInstance<OAuthServer>();
+
+            Provider = new SsoProvider();
+            OAuth = new OAuthServer2();
 
             //OAuthServer.Instance.Log = XTrace.Log;
             OAuth.Log = LogProvider.Provider.AsLog("OAuth");
@@ -82,7 +95,6 @@ namespace NewLife.Cube.Controllers
             var prov = Provider;
             var client = prov.GetClient(name);
             var rurl = prov.GetReturnUrl(Request, true);
-            var redirect = prov.GetRedirect(Request, rurl);
 
             var state = GetRequest("state");
             if (!state.IsNullOrEmpty())
@@ -90,9 +102,30 @@ namespace NewLife.Cube.Controllers
             else
                 state = client.Name;
 
-            var url = client.Authorize(redirect, state);
+            return base.Redirect(OnLogin(client, state, rurl));
+        }
 
-            return Redirect(url);
+        private String OnLogin(OAuthClient client, String state, String returnUrl)
+        {
+            var prov = Provider;
+            var redirect = prov.GetRedirect(Request, returnUrl);
+
+            // 钉钉内打开时，自动切换为应用内免登
+            if (client is DingTalkClient ding)
+            {
+#if __CORE__
+                var agent = Request.Headers["User-Agent"] + "";
+#else
+                var agent = Request.UserAgent;
+#endif
+                if (!agent.IsNullOrEmpty() && agent.Contains("DingTalk"))
+                {
+                    ding.Scope = "snsapi_auth";
+                    ding.SetMode(ding.Scope);
+                }
+            }
+
+            return client.Authorize(redirect, state);
         }
 
         /// <summary>第三方登录完成后跳转到此</summary>
@@ -113,7 +146,20 @@ namespace NewLife.Cube.Controllers
             var prov = Provider;
             var client = prov.GetClient(name);
 
-            client.WriteLog("LoginInfo name={0} code={1} state={2}", name, code, state);
+            client.WriteLog("LoginInfo name={0} code={1} state={2} {3}", name, code, state, Request.GetRawUrl());
+
+            // 无法拿到code时，跳回去再来
+            if (code.IsNullOrEmpty())
+            {
+                if (state == "refresh") throw new Exception("非法请求，无法取得code");
+
+                return Redirect(OnLogin(client, $"{name}_refresh", null));
+            }
+            // 短期内用过的code也跳回
+            if (!_codeCache.TryAdd(code, code, false, out _))
+            {
+                return Redirect(OnLogin(client, $"{name}_refresh", null));
+            }
 
             // 构造redirect_uri，部分提供商（百度）要求获取AccessToken的时候也要传递
             var redirect = prov.GetRedirect(Request);
@@ -124,38 +170,50 @@ namespace NewLife.Cube.Controllers
             try
             {
                 // 获取访问令牌
-                var html = client.GetAccessToken(code);
-
-                // 如果拿不到访问令牌或用户信息，则重新跳转
-                if (client.AccessToken.IsNullOrEmpty() && client.OpenID.IsNullOrEmpty() && client.UserID == 0)
+                if (!client.AccessUrl.IsNullOrEmpty())
                 {
-                    // 如果拿不到访问令牌，刷新一次，然后报错
-                    if (state.EqualIgnoreCase("refresh"))
+                    var html = client.GetAccessToken(code);
+
+                    // 如果拿不到访问令牌或用户信息，则重新跳转
+                    if (client.AccessToken.IsNullOrEmpty() && client.OpenID.IsNullOrEmpty() && client.UserID == 0 && client.UserName.IsNullOrEmpty())
                     {
-                        if (client.Log == null) XTrace.WriteLine(html);
+                        XTrace.WriteLine("拿不到访问令牌 code={0} state={1}", code, state);
+                        XTrace.WriteLine(Request.GetRawUrl() + "");
+                        if (!html.IsNullOrEmpty()) XTrace.WriteLine(html);
 
-                        throw new InvalidOperationException("内部错误，无法获取令牌");
+                        throw new InvalidOperationException($"内部错误，无法获取令牌 code={code}");
                     }
-
-                    XTrace.WriteLine("拿不到访问令牌，重新跳转 code={0} state={1}", code, state);
-
-                    return RedirectToAction("Login", new { name = client.Name, r = returnUrl, state = "refresh" });
                 }
+
+                //// 特殊处理钉钉
+                //if (client is DingTalkClient ding) DoDingDing(ding);
 
                 // 获取OpenID。部分提供商不需要
                 if (!client.OpenIDUrl.IsNullOrEmpty()) client.GetOpenID();
-                // 获取用户信息
-                if (!client.UserUrl.IsNullOrEmpty()) client.GetUserInfo();
+
+                // 短时间内不要重复拉取用户信息
+                // 注意，这里可能因为没有OpenID和UserName，无法判断得到用户链接，需要GetUserInfo后方能匹配UserConnect
+                var set = Setting.Current;
+                var uc = prov.GetConnect(client);
+                if (uc.UpdateTime.AddSeconds(set.RefreshUserPeriod) < DateTime.Now)
+                {
+                    // 获取用户信息
+                    if (!client.UserUrl.IsNullOrEmpty()) client.GetUserInfo();
+                }
+
+                // 如果前面没有取得用户链接，需要再次查询
+                if (uc.ID == 0) uc = prov.GetConnect(client);
+                uc.Fill(client);
 
 #if __CORE__
-                var url = prov.OnLogin(client, HttpContext.RequestServices);
+                var url = prov.OnLogin(client, HttpContext.RequestServices, uc);
 #else
-                var url = prov.OnLogin(client, HttpContext);
+                var url = prov.OnLogin(client, HttpContext, uc);
 #endif
 
                 // 标记登录提供商
                 SetSession("Cube_Sso", client.Name);
-                SetSession("Cube_Sso_Client", client);
+                //SetSession("Cube_Sso_Client", client);
 
                 if (!returnUrl.IsNullOrEmpty()) url = returnUrl;
 
@@ -165,11 +223,64 @@ namespace NewLife.Cube.Controllers
             {
                 XTrace.WriteException(ex.GetTrue());
 
-                if (!state.EqualIgnoreCase("refresh")) return RedirectToAction("Login", new { name = client.Name, r = returnUrl, state = "refresh" });
-
                 throw;
             }
         }
+
+        //private static String _ding_access_token;
+        //private static DateTime _ding_expire;
+        //private void DoDingDing(DingTalkClient client)
+        //{
+        //    if (client == null || client.UnionID.IsNullOrEmpty()) return;
+
+        //    // 如果配置了企业级账号，可以获取更详细信息
+        //    var token = _ding_access_token;
+        //    if (token.IsNullOrEmpty() || _ding_expire < DateTime.Now)
+        //    {
+        //        var ps = Parameter.FindAllByUserID(0).Where(e => e.Category == "钉钉").ToList();
+        //        var key = ps.FirstOrDefault(e => e.Name == "appkey");
+        //        if (key == null)
+        //        {
+        //            key = new Parameter { Category = "钉钉", Name = "appkey", Enable = true };
+        //            key.Insert();
+        //        }
+        //        var secret = ps.FirstOrDefault(e => e.Name == "appsecret");
+        //        if (secret == null)
+        //        {
+        //            secret = new Parameter { Category = "钉钉", Name = "appsecret", Enable = true };
+        //            secret.Insert();
+        //        }
+
+        //        _ding_access_token = null;
+        //        if (!key.Value.IsNullOrEmpty() && !secret.Value.IsNullOrEmpty())
+        //        {
+        //            token = _ding_access_token = DingTalkClient.GetToken(key.Value, secret.Value);
+        //        }
+
+        //        _ding_expire = DateTime.Now.AddSeconds(7200 - 60);
+        //    }
+
+        //    if (!token.IsNullOrEmpty())
+        //    {
+        //        try
+        //        {
+        //            // 根据UnionId换取员工Id
+        //            var userid = DingTalkClient.GetUseridByUnionid(token, client.UnionID);
+        //            if (!userid.IsNullOrEmpty())
+        //            {
+        //                // 钉钉Id一般不是自己设置的，很乱，不可取
+        //                //client.UserName = userid;
+
+        //                client.GetUserInfo(token, userid);
+        //            }
+        //        }
+        //        catch (AggregateException ex)
+        //        {
+        //            // 某些用户不是本团队成员，此处会抛出异常
+        //            if (!(ex.GetTrue() is ApiException)) throw;
+        //        }
+        //    }
+        //}
 
         /// <summary>注销登录</summary>
         /// <remarks>
@@ -180,14 +291,14 @@ namespace NewLife.Cube.Controllers
         public virtual ActionResult Logout()
         {
             // 先读Session，待会会清空
-#if __CORE__
+            //#if __CORE__
             var prov = Provider;
             var name = GetSession<String>("Cube_Sso");
             var client = prov.GetClient(name);
             //var client = GetSession<OAuthClient>("Cube_Sso_Client");
-#else
-            var client = GetSession<OAuthClient>("Cube_Sso_Client");
-#endif
+            //#else
+            //var client = GetSession<OAuthClient>("Cube_Sso_Client");
+            //#endif
 
             var prv = Provider;
             prv?.Logout();
@@ -195,8 +306,10 @@ namespace NewLife.Cube.Controllers
             var url = "";
 
             // 准备跳转到验证中心
-            if (client != null)
+            var set = Setting.Current;
+            if (client != null && set.LogoutAll)
             {
+                if (client.LogoutUrl.IsNullOrEmpty() && name.EqualIgnoreCase("NewLife")) client.LogoutUrl = "logout?client_id={key}&redirect_uri={redirect}&state={state}";
                 if (!client.LogoutUrl.IsNullOrEmpty())
                 {
                     // 准备返回地址
@@ -209,8 +322,10 @@ namespace NewLife.Cube.Controllers
                     else
                         state = client.Name;
 
+                    url = url.AsUri(Request.GetRawUrl()) + "";
+
                     // 跳转到验证中心注销地址
-                    url = client.Logout(url, state, Request.GetRawUrl());
+                    url = client.Logout(url, state);
 
                     return Redirect(url);
                 }
@@ -239,9 +354,9 @@ namespace NewLife.Cube.Controllers
 #endif
             var client = prov.GetClient(id);
             var redirect = prov.GetRedirect(Request, url);
-            // 附加绑定动作
-            redirect += "&sso_action=bind";
-            url = client.Authorize(redirect, client.Name);
+            //// 附加绑定动作
+            //redirect += "&sso_action=bind";
+            url = client.Authorize(redirect, client.Name + "_bind");
 
             return Redirect(url);
         }
@@ -260,7 +375,7 @@ namespace NewLife.Cube.Controllers
             if (uc != null)
             {
                 uc.Enable = false;
-                uc.Save();
+                uc.Update();
             }
 
 #if __CORE__
@@ -300,7 +415,15 @@ namespace NewLife.Cube.Controllers
             var url = "";
 
             // 如果已经登录，直接返回。否则跳到登录页面
-            var user = prov?.Current ?? prov?.Provider.TryLogin();
+            var user = prov?.Current;
+            if (user == null)
+            {
+#if __CORE__
+                user = prov?.Provider.TryLogin(HttpContext);
+#else
+                user = prov?.Provider.TryLogin(HttpContext.ApplicationInstance.Context);
+#endif
+            }
             if (user != null)
                 url = OAuth.GetResult(key, user);
             else
@@ -367,7 +490,7 @@ namespace NewLife.Cube.Controllers
 
             try
             {
-                var rs = Provider.GetAccessToken(OAuth, client_id, client_secret, code);
+                var rs = Provider.GetAccessToken(OAuth, client_id, client_secret, code, UserHost);
 
                 // 返回UserInfo告知客户端可以请求用户信息
 #if __CORE__
@@ -444,22 +567,21 @@ namespace NewLife.Cube.Controllers
             if (prv == null) throw new ArgumentNullException(nameof(Provider));
 
             var set = Setting.Current;
-            var av = set.AvatarPath.CombinePath(id + ".png");
-            var av2 = av.GetFullPath();
-            if (!System.IO.File.Exists(av2))
+            var av = set.AvatarPath.CombinePath(id + ".png").GetBasePath();
+            if (!System.IO.File.Exists(av))
             {
                 var user = prv.Provider?.FindByID(id);
                 if (user == null) throw new Exception("用户不存在 " + id);
 
                 prv.FetchAvatar(user);
             }
-            if (!System.IO.File.Exists(av2)) throw new Exception("用户头像不存在 " + id);
+            if (!System.IO.File.Exists(av)) throw new Exception("用户头像不存在 " + id);
 
 #if __CORE__
-            var vs = System.IO.File.ReadAllBytes(av2);
+            var vs = System.IO.File.ReadAllBytes(av);
             return File(vs, "image/png");
 #else
-            return File(av2, "image/png");
+            return File(av, "image/png");
 #endif
         }
         #endregion

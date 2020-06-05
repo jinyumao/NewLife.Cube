@@ -86,7 +86,7 @@ namespace ASP
             
             #line 10 "..\..\Areas\Admin\Views\VisitStat\_List_Data.cshtml"
   
-    var fact = ViewBag.Factory as IEntityOperate;
+    var fact = ViewBag.Factory as IEntityFactory;
     var page = ViewBag.Page as Pager;
     var fields = ViewBag.Fields as IList<FieldItem>;
     var set = ViewBag.PageSetting as PageSetting;
@@ -619,7 +619,7 @@ WriteLiteral("        ");
 
             
             #line 76 "..\..\Areas\Admin\Views\VisitStat\_List_Data.cshtml"
-         if (page.State != null)
+         if (page.State is VisitStat)
         {
             var entity = page.State as VisitStat;
 

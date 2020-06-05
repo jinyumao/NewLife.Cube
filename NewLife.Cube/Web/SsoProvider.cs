@@ -4,15 +4,17 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using NewLife.Cube.Entity;
+using NewLife.Web;
+using XCode.Membership;
+using System.Net.Http;
 using NewLife.Log;
 using NewLife.Model;
 using NewLife.Reflection;
 using NewLife.Security;
-using NewLife.Web;
-using XCode.Membership;
-using System.Net.Http;
+using XCode;
 #if __CORE__
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using IHttpRequest = Microsoft.AspNetCore.Http.HttpRequest;
 #else
 using IHttpRequest = System.Web.HttpRequestBase;
@@ -100,11 +102,10 @@ namespace NewLife.Cube.Web
             return uri.AppendReturn(returnUrl);
         }
 
-        /// <summary>登录成功</summary>
-        /// <param name="client">OAuth客户端</param>
-        /// <param name="context">服务提供者。可用于获取HttpContext成员</param>
+        /// <summary>获取连接信息</summary>
+        /// <param name="client"></param>
         /// <returns></returns>
-        public virtual String OnLogin(OAuthClient client, IServiceProvider context)
+        public virtual UserConnect GetConnect(OAuthClient client)
         {
             var openid = client.OpenID;
             if (openid.IsNullOrEmpty()) openid = client.UserName;
@@ -113,17 +114,29 @@ namespace NewLife.Cube.Web
             var uc = UserConnect.FindByProviderAndOpenID(client.Name, openid);
             if (uc == null) uc = new UserConnect { Provider = client.Name, OpenID = openid };
 
-            uc.Fill(client);
+            return uc;
+        }
 
+        /// <summary>登录成功</summary>
+        /// <param name="client">OAuth客户端</param>
+        /// <param name="context">服务提供者。可用于获取HttpContext成员</param>
+        /// <param name="uc">用户链接</param>
+        /// <returns></returns>
+        public virtual String OnLogin(OAuthClient client, IServiceProvider context, UserConnect uc)
+        {
             // 强行绑定，把第三方账号强行绑定到当前已登录账号
             var forceBind = false;
 #if __CORE__
             var httpContext = context.GetService<IHttpContextAccessor>().HttpContext;
             var req = httpContext.Request;
+            var ip = httpContext.GetUserHost();
 #else
             var req = context.GetService<HttpRequest>();
+            var httpContext = req.RequestContext.HttpContext;
+            var ip = httpContext.GetUserHost();
 #endif
-            if (req != null) forceBind = req.Get("sso_action").EqualIgnoreCase("bind");
+            //if (req != null) forceBind = req.Get("sso_action").EqualIgnoreCase("bind");
+            if (req != null) forceBind = req.Get("state").EndsWithIgnoreCase("_bind");
 
             // 可能因为初始化顺序的问题，导致前面没能给Provider赋值
             var prv = Provider;
@@ -140,12 +153,15 @@ namespace NewLife.Cube.Web
             {
                 user3.Logins++;
                 user3.LastLogin = DateTime.Now;
-                user3.LastLoginIP = WebHelper.UserHost;
-                user3.Save();
+                user3.LastLoginIP = ip;
+                //user3.Save();
+                //(user3 as IEntity).Update();
             }
+            if (user is IEntity entity) entity.Update();
 
             try
             {
+                uc.UpdateTime = DateTime.Now;
                 uc.Save();
             }
             catch (Exception ex)
@@ -154,7 +170,11 @@ namespace NewLife.Cube.Web
                 XTrace.WriteException(ex);
             }
 
-            if (!user.Enable) throw new InvalidOperationException("用户已禁用！");
+            // 写日志
+            var log = LogProvider.Provider;
+            log?.WriteLog(typeof(UserX), "SSO登录", true, $"[{user}]从[{client.Name}]的[{client.UserName}]登录", user.ID, user + "");
+
+            if (!user.Enable) throw new InvalidOperationException($"用户[{user}]已禁用！");
 
             // 登录成功，保存当前用户
             //prv.Current = user;
@@ -163,11 +183,14 @@ namespace NewLife.Cube.Web
             //prv.SaveCookie(user);
             var set = Setting.Current;
             if (set.SessionTimeout > 0)
+            {
+                var expire = TimeSpan.FromSeconds(set.SessionTimeout);
 #if __CORE__
-                ManagerProviderHelper.SaveCookie(prv, user, TimeSpan.FromSeconds(set.SessionTimeout), httpContext);
+                prv.SaveCookie(user, expire, httpContext);
 #else
-                prv.SaveCookie(user, TimeSpan.FromSeconds(set.SessionTimeout), context);
+                prv.SaveCookie(user, expire, httpContext.ApplicationInstance.Context);
 #endif
+            }
 
             return SuccessUrl;
         }
@@ -183,35 +206,56 @@ namespace NewLife.Cube.Web
             // 用户信息
             if (dic != null && user is UserX user2)
             {
-                if (user2.Mail.IsNullOrEmpty() && dic.TryGetValue("email", out var email)) user2.Mail = email;
-                if (user2.Mail.IsNullOrEmpty() && dic.TryGetValue("mail", out email)) user2.Mail = email;
-                if (user2.Mobile.IsNullOrEmpty() && dic.TryGetValue("mobile", out var mobile)) user2.Mobile = mobile;
-                if (user2.Code.IsNullOrEmpty() && dic.TryGetValue("code", out var code)) user2.Code = code;
+                if (user2.Code.IsNullOrEmpty()) user2.Code = client.UserCode;
+                if (user2.Mobile.IsNullOrEmpty()) user2.Mobile = client.Mobile;
+                if (user2.Mail.IsNullOrEmpty()) user2.Mail = client.Mail;
+
                 if (user2.Sex == SexKinds.未知 && dic.TryGetValue("sex", out var sex)) user2.Sex = (SexKinds)sex.ToInt();
+                if (user2.Remark.IsNullOrEmpty()) user2.Remark = client.Detail;
 
                 var set = Setting.Current;
 
                 // 使用认证中心的角色
-                var roleId = GetRole(dic, true);
-                if (roleId > 0)
+                if (set.UseSsoRole)
                 {
-                    user2.RoleID = roleId;
+                    var roleId = GetRole(dic, true);
+                    if (roleId > 0)
+                    {
+                        user2.RoleID = roleId;
 
-                    var ids = GetRoles(client.Items, true).ToList();
-                    if (ids.Contains(roleId)) ids.Remove(roleId);
-                    if (ids.Count == 0)
-                        user2.RoleIDs = null;
-                    else
-                        user2.RoleIDs = "," + ids.OrderBy(e => e).Join() + ",";
+                        var ids = GetRoles(client.Items, true).ToList();
+                        if (ids.Contains(roleId)) ids.Remove(roleId);
+                        if (ids.Count == 0)
+                            user2.RoleIDs = null;
+                        else
+                            user2.RoleIDs = "," + ids.OrderBy(e => e).Join() + ",";
+                    }
                 }
-                else if (user2.RoleID <= 0 && set.DefaultRole > 0)
-                    user2.RoleID = set.DefaultRole;
+                // 使用本地角色
+                if (user2.RoleID <= 0 && !set.DefaultRole.IsNullOrEmpty())
+                    user2.RoleID = Role.GetOrAdd(set.DefaultRole).ID;
 
-                // 头像
-                if (user2.Avatar.IsNullOrEmpty()) user2.Avatar = client.Avatar;
+                // 头像。有可能是相对路径，需要转为绝对路径
+                var av = client.Avatar;
+                if (av != null && av.StartsWith("/") && client.Server.StartsWithIgnoreCase("http"))
+                    av = new Uri(new Uri(client.Server), av) + "";
+
+                if (user2.Avatar.IsNullOrEmpty())
+                    user2.Avatar = av;
+                // 本地头像，如果不存在，也要更新
+                else if (user2.Avatar.StartsWith("/Sso/Avatar/"))
+                {
+                    var av2 = Setting.Current.AvatarPath.CombinePath(user2.ID + ".png").GetBasePath();
+                    if (!File.Exists(av2))
+                    {
+                        LogProvider.Provider?.WriteLog(user.GetType(), "更新头像", true, $"{user2.Avatar} => {av}", user.ID, user + "");
+
+                        user2.Avatar = av;
+                    }
+                }
 
                 // 下载远程头像到本地，Avatar还是保存远程头像地址
-                if (user2.Avatar.StartsWithIgnoreCase("http") && !set.AvatarPath.IsNullOrEmpty()) FetchAvatar(user);
+                if (user2.Avatar.StartsWithIgnoreCase("http") && !set.AvatarPath.IsNullOrEmpty()) Task.Run(() => FetchAvatar(user, av));
             }
         }
 
@@ -221,6 +265,7 @@ namespace NewLife.Cube.Web
         public virtual IManageUser OnBind(UserConnect uc, OAuthClient client)
         {
             var prv = Provider;
+            var mode = "";
 
             // 如果未登录，需要注册一个
             var user = prv.Current;
@@ -234,15 +279,43 @@ namespace NewLife.Cube.Web
                 if (name.IsNullOrEmpty()) name = client.NickName;
                 if (!name.IsNullOrEmpty())
                 {
-                    user = prv.FindByName(name);
-                    if (user != null && !set.ForceBindUser)
+                    // 强制绑定本地用户时，没有前缀
+                    if (set.ForceBindUser)
                     {
+                        mode = "UserName";
+                        user = prv.FindByName(name);
+                    }
+                    else
+                    {
+                        mode = "Provider-UserName";
                         name = client.Name + "_" + name;
                         user = prv.FindByName(name);
                     }
                 }
-                else
+
+                // 匹配Code
+                if (user == null && set.ForceBindUserCode)
+                {
+                    mode = "UserCode";
+                    if (!client.UserCode.IsNullOrEmpty()) user = UserX.FindByCode(client.UserCode);
+                }
+
+                // 匹配Mobile
+                if (user == null && set.ForceBindUserMobile)
+                {
+                    mode = "UserMobile";
+                    if (!client.Mobile.IsNullOrEmpty()) user = UserX.FindByMobile(client.Mobile);
+                }
+
+                // 匹配Mail
+                if (user == null && set.ForceBindUserMail)
+                {
+                    mode = "UserMail";
+                    if (!client.Mail.IsNullOrEmpty()) user = UserX.FindByMail(client.Mail);
+                }
+
                 // QQ、微信 等不返回用户名
+                if (user == null && name.IsNullOrEmpty())
                 {
                     // OpenID和AccessToken不可能同时为空
                     var openid = client.OpenID;
@@ -251,14 +324,17 @@ namespace NewLife.Cube.Web
                     // 过长，需要随机一个较短的
                     var num = openid.GetBytes().Crc();
 
+                    mode = "OpenID-Crc";
                     name = client.Name + "_" + num.ToString("X8");
                     user = prv.FindByName(name);
                 }
 
                 if (user == null)
                 {
+                    mode = "Register";
+
                     // 新注册用户采用魔方默认角色
-                    var rid = set.DefaultRole;
+                    var rid = Role.GetOrAdd(set.DefaultRole).ID;
                     //if (rid == 0 && client.Items.TryGetValue("roleid", out var roleid)) rid = roleid.ToInt();
                     //if (rid <= 0) rid = GetRole(client.Items, rid < -1);
 
@@ -270,6 +346,10 @@ namespace NewLife.Cube.Web
 
             uc.UserID = user.ID;
             uc.Enable = true;
+
+            // 写日志
+            var log = LogProvider.Provider;
+            log?.WriteLog(typeof(UserX), "绑定", true, $"[{user}]依据[{mode}]绑定到[{client.Name}]的[{client.UserName}]", user.ID, user + "");
 
             return user;
         }
@@ -285,8 +365,9 @@ namespace NewLife.Cube.Web
         /// <param name="client_id"></param>
         /// <param name="client_secret"></param>
         /// <param name="code"></param>
+        /// <param name="ip"></param>
         /// <returns></returns>
-        public virtual Object GetAccessToken(OAuthServer sso, String client_id, String client_secret, String code)
+        public virtual Object GetAccessToken(OAuthServer sso, String client_id, String client_secret, String code, String ip)
         {
             var token = sso.GetToken(client_id, client_secret, code);
 
@@ -335,6 +416,7 @@ namespace NewLife.Cube.Web
                     roleids = user2.RoleIDs,
                     rolenames = user2.Roles.Skip(1).Join(",", e => e + ""),
                     avatar = user2.Avatar,
+                    detail = user2.Remark,
                 };
             else
                 return new
@@ -349,41 +431,52 @@ namespace NewLife.Cube.Web
         #region 辅助
         /// <summary>抓取远程头像</summary>
         /// <param name="user"></param>
+        /// <param name="url"></param>
         /// <returns></returns>
-        public virtual Boolean FetchAvatar(IManageUser user)
+        public virtual Boolean FetchAvatar(IManageUser user, String url = null)
         {
-            var av = user.GetValue("Avatar") as String;
-            if (av.IsNullOrEmpty()) throw new Exception("用户头像不存在 " + user);
+            if (url.IsNullOrEmpty()) url = user.GetValue("Avatar") as String;
+            //if (av.IsNullOrEmpty()) throw new Exception("用户头像不存在 " + user);
 
-            var url = av;
+            // 尝试从用户链接获取头像地址
+            if (url.IsNullOrEmpty() || !url.StartsWithIgnoreCase("http"))
+            {
+                var list = UserConnect.FindAllByUserID(user.ID);
+                url = list.OrderByDescending(e => e.UpdateTime)
+                    .Where(e => !e.Avatar.IsNullOrEmpty() && e.Avatar.StartsWithIgnoreCase("http"))
+                    .FirstOrDefault()?.Avatar;
+            }
+
+            if (url.IsNullOrEmpty()) return false;
             if (!url.StartsWithIgnoreCase("http")) return false;
 
             // 不要扩展名
             var set = Setting.Current;
-            av = set.AvatarPath.CombinePath(user.ID + ".png").GetFullPath();
+            var dest = set.AvatarPath.CombinePath(user.ID + ".png").GetBasePath();
 
-            // 头像是否已存在
-            if (File.Exists(av)) return false;
+            //// 头像是否已存在
+            //if (File.Exists(dest)) return false;
 
-            av.EnsureDirectory(true);
+            LogProvider.Provider?.WriteLog(user.GetType(), "抓取头像", true, $"{url} => {dest}", user.ID, user + "");
+
+            dest.EnsureDirectory(true);
 
             try
             {
-                //var wc = new WebClientX();
-                //Task.Factory.StartNew(() => wc.DownloadFileAsync(url, av)).Wait(5000);
-
                 var client = new HttpClient();
                 var rs = client.GetAsync(url).Result;
                 var buf = rs.Content.ReadAsByteArrayAsync().Result;
-                File.WriteAllBytes(av, buf);
+                File.WriteAllBytes(dest, buf);
 
                 // 更新头像
                 user.SetValue("Avatar", "/Sso/Avatar/" + user.ID);
+                (user as IEntity)?.Update();
 
                 return true;
             }
             catch (Exception ex)
             {
+                XTrace.WriteLine("抓取头像失败，{0}, {1}", user, url);
                 XTrace.WriteException(ex);
             }
 
@@ -416,10 +509,12 @@ namespace NewLife.Cube.Web
         {
             if (dic.TryGetValue("RoleNames", out var roleNames))
             {
-                var names = roleNames.Split(",");
+                var names = roleNames.Split(',');
                 var rs = new List<Int32>();
                 foreach (var item in names)
                 {
+                    if (item.IsNullOrEmpty()) continue;
+
                     var r = Role.FindByName(item);
                     if (r != null)
                         rs.Add(r.ID);

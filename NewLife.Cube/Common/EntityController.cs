@@ -5,6 +5,15 @@ using System.Linq;
 using NewLife.Web;
 using XCode;
 using XCode.Membership;
+using NewLife.Reflection;
+using NewLife.Log;
+using System.Threading.Tasks;
+using System.Diagnostics;
+using System.Net.Http;
+using NewLife.Serialization;
+using NewLife.Http;
+using NewLife.Remoting;
+using System.IO;
 #if __CORE__
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -45,7 +54,7 @@ namespace NewLife.Cube
             var url = Request.UrlReferrer + "";
 #endif
 
-            var entity = Find(id);
+            var entity = FindData(id);
             Valid(entity, DataObjectMethodType.Delete, true);
 
             OnDelete(entity);
@@ -94,7 +103,7 @@ namespace NewLife.Cube
 #else
             var url = Request.UrlReferrer + "";
 #endif
-            SetSession("Cube_Add_Referrer", url);
+            Session["Cube_Add_Referrer"] = url;
 
             return FormView(entity);
         }
@@ -124,7 +133,13 @@ namespace NewLife.Cube
             var err = "";
             try
             {
+                //SaveFiles(entity);
+
                 OnInsert(entity);
+
+                var fs = SaveFiles(entity);
+                if (fs.Count > 0) OnUpdate(entity);
+
                 rs = true;
             }
             catch (ArgumentException aex)
@@ -148,7 +163,7 @@ namespace NewLife.Cube
 
             ViewBag.StatusMessage = "添加成功！";
 
-            var url = GetSession<String>("Cube_Add_Referrer");
+            var url = Session["Cube_Add_Referrer"] as String;
             if (!url.IsNullOrEmpty())
                 return Redirect(url);
             else
@@ -163,14 +178,14 @@ namespace NewLife.Cube
         [DisplayName("更新{type}")]
         public virtual ActionResult Edit(String id)
         {
-            var entity = Find(id);
+            var entity = FindData(id);
             if (entity == null || (entity as IEntity).IsNullKey) throw new XException("要编辑的数据[{0}]不存在！", id);
 
             // 验证数据权限
             Valid(entity, DataObjectMethodType.Update, false);
 
             // Json输出
-            if (IsJsonRequest) return JsonOK(entity, new { id });
+            if (IsJsonRequest) return Json(0, null, entity);
 
             return FormView(entity);
         }
@@ -197,6 +212,8 @@ namespace NewLife.Cube
             var err = "";
             try
             {
+                SaveFiles(entity);
+
                 rs = OnUpdate(entity);
                 if (rs <= 0) rs = 1;
             }
@@ -228,6 +245,42 @@ namespace NewLife.Cube
                 // 更新完成保持本页
                 return FormView(entity);
             }
+        }
+
+        /// <summary>保存上传文件</summary>
+        /// <param name="entity"></param>
+        /// <returns></returns>
+        protected virtual IList<String> SaveFiles(TEntity entity)
+        {
+            var list = new List<String>();
+
+#if __CORE__
+            var files = Request.Form.Files;
+#else
+            var files = Request.Files;
+#endif
+            var fields = Factory.Fields;
+            foreach (var fi in fields)
+            {
+                var dc = fi.Field;
+                if (dc.ItemType.EqualIgnoreCase("file", "image"))
+                {
+                    var f = files[dc.Name];
+                    if (f != null)
+                    {
+                        // 保存文件
+                        var ext = Path.GetExtension(f.FileName);
+                        var fileName = entity[Factory.Unique] + ext;
+                        fileName = $"{Factory.EntityType.Name}\\{DateTime.Today:yyyyMMdd}\\{fileName}";
+                        fileName = Setting.Current.UploadPath.CombinePath(fileName).GetBasePath();
+                        fileName.EnsureDirectory(true);
+
+                        f.SaveAs(fileName);
+                    }
+                }
+            }
+
+            return list;
         }
         #endregion
 
@@ -292,7 +345,8 @@ namespace NewLife.Cube
 #endif
 
             var count = 0;
-            var p = new Pager(GetSession<Pager>(CacheKey));
+            var p = Session[CacheKey] as Pager;
+            p = new Pager(p);
             if (p != null)
             {
                 p.PageIndex = 1;
@@ -300,7 +354,7 @@ namespace NewLife.Cube
                 // 不要查记录数
                 p.RetrieveTotalCount = false;
 
-                var list = Search(p).ToList();
+                var list = SearchData(p).ToList();
                 count += list.Count;
                 //list.Delete();
                 using (var tran = Entity<TEntity>.Meta.CreateTrans())
@@ -315,31 +369,6 @@ namespace NewLife.Cube
                     tran.Commit();
                 }
             }
-
-            if (Request.IsAjaxRequest())
-                return JsonRefresh("共删除{0}行数据".F(count));
-            else if (!url.IsNullOrEmpty())
-                return Redirect(url);
-            else
-                return RedirectToAction("Index");
-        }
-
-        /// <summary>清空全表数据</summary>
-        /// <returns></returns>
-        [EntityAuthorize(PermissionFlags.Delete)]
-        [DisplayName("清空")]
-        public virtual ActionResult Clear()
-        {
-#if __CORE__
-            var url = Request.Headers["Referer"].FirstOrDefault() + "";
-#else
-            var url = Request.UrlReferrer + "";
-#endif
-
-            var p = new Pager(GetSession<Pager>(CacheKey));
-            if (p != null && p.Params.Count > 0) return JsonError("当前带有查询参数，为免误解，禁止全表清空！");
-
-            var count = Entity<TEntity>.Meta.Session.Truncate();
 
             if (Request.IsAjaxRequest())
                 return JsonRefresh("共删除{0}行数据".F(count));
@@ -365,6 +394,89 @@ namespace NewLife.Cube
         /// <param name="entity"></param>
         /// <returns></returns>
         protected virtual Int32 OnDelete(TEntity entity) => entity.Delete();
+        #endregion
+
+        #region 同步数据
+        /// <summary>同步数据</summary>
+        /// <returns></returns>
+        [EntityAuthorize(PermissionFlags.Insert)]
+        [DisplayName("同步{type}")]
+        public async Task<ActionResult> Sync()
+        {
+            //if (id.IsNullOrEmpty()) return RedirectToAction(nameof(Index));
+
+            // 读取系统配置
+            var ps = Parameter.FindAllByUserID(ManageProvider.User.ID); // UserID=0 && Category=Sync
+            ps = ps.Where(e => e.Category == "Sync").ToList();
+            var server = ps.FirstOrDefault(e => e.Name == "Server")?.Value;
+            var token = ps.FirstOrDefault(e => e.Name == "Token")?.Value;
+            var models = ps.FirstOrDefault(e => e.Name == "Models")?.Value;
+
+            if (server.IsNullOrEmpty()) throw new ArgumentNullException("未配置 Sync:Server");
+            if (token.IsNullOrEmpty()) throw new ArgumentNullException("未配置 Sync:Token");
+            if (models.IsNullOrEmpty()) throw new ArgumentNullException("未配置 Sync:Models");
+
+            var mds = models.Split(",");
+
+            //// 创建实体工厂
+            //var etype = mds.FirstOrDefault(e => e.Replace(".", "_") == id);
+            //var fact = etype.GetTypeEx()?.AsFactory();
+            //if (fact == null) throw new ArgumentNullException(nameof(id), "未找到模型 " + id);
+
+            // 找到控制器，以识别动作地址
+            var cs = GetControllerAction();
+            var ctrl = cs[0].IsNullOrEmpty() ? cs[1] : $"{cs[0]}/{cs[1]}";
+            if (!mds.Contains(ctrl)) throw new InvalidOperationException($"[{ctrl}]未配置为允许同步 Sync:Models");
+
+            // 创建客户端，准备发起请求
+            var url = server.EnsureEnd("/") + $"{ctrl}/Json/{token}?PageSize=100000";
+
+            var http = new HttpClient
+            {
+                BaseAddress = new Uri(url)
+            };
+
+            var sw = Stopwatch.StartNew();
+
+            var list = await http.InvokeAsync<TEntity[]>(HttpMethod.Get, null);
+
+            sw.Stop();
+
+            var fact = Factory;
+            XTrace.WriteLine("[{0}]共同步数据[{1:n0}]行，耗时{2:n0}ms，数据源：{3}", fact.EntityType.FullName, list.Length, sw.ElapsedMilliseconds, url);
+
+            var arrType = fact.EntityType.MakeArrayType();
+            if (list.Length > 0)
+            {
+                XTrace.WriteLine("[{0}]准备覆盖写入[{1}]行数据", fact.EntityType.FullName, list.Length);
+                using (var tran = fact.CreateTrans())
+                {
+                    // 清空
+                    try
+                    {
+                        fact.Session.Truncate();
+                    }
+                    catch (Exception ex) { XTrace.WriteException(ex); }
+
+                    // 插入
+                    //ms.All(e => { e.AllChilds = new List<Menu>(); return true; });
+                    fact.AllowInsertIdentity = true;
+                    //ms.Insert();
+                    //var empty = typeof(List<>).MakeGenericType(fact.EntityType).CreateInstance();
+                    foreach (IEntity entity in list)
+                    {
+                        if (entity is IEntityTree tree) tree.AllChilds.Clear();
+
+                        entity.Insert();
+                    }
+                    fact.AllowInsertIdentity = false;
+
+                    tran.Commit();
+                }
+            }
+
+            return Index();
+        }
         #endregion
     }
 }

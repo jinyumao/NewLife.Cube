@@ -4,8 +4,6 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProductVersion>
-    </ProductVersion>
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{7AC0E99B-CFD8-4B59-8838-503EAA30523F}</ProjectGuid>
     <ProjectTypeGuids>{349c5851-65df-11da-9384-00065b846f21};{fae04ec0-301f-11d3-bf4b-00c04f79efbc}</ProjectTypeGuids>
@@ -15,18 +13,8 @@
     <AssemblyName>NewLife.Cube</AssemblyName>
     <MvcBuildViews>false</MvcBuildViews>
     <UseIISExpress>true</UseIISExpress>
-    <IISExpressSSLPort />
-    <IISExpressAnonymousAuthentication />
-    <IISExpressWindowsAuthentication />
-    <IISExpressUseClassicPipelineMode />
-    <MvcProjectUpgradeChecked>true</MvcProjectUpgradeChecked>
-    <FileUpgradeFlags>
-    </FileUpgradeFlags>
-    <UpgradeBackupLocation>
-    </UpgradeBackupLocation>
-    <OldToolsVersion>15.0</OldToolsVersion>
-    <Use64BitIISExpress />
-    <UseGlobalApplicationHostFile />
+    <IsPackable>true</IsPackable>
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
@@ -53,19 +41,22 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Microsoft.CSharp" />
+    <Reference Include="Microsoft.VisualBasic" />
     <Reference Include="Microsoft.Web.Infrastructure, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.Web.Infrastructure.1.0.0.0\lib\net40\Microsoft.Web.Infrastructure.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="NewLife.Core, Version=8.2.7126.42291, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\NewLife.Core.8.2.2019.706\lib\net45\NewLife.Core.dll</HintPath>
+    <Reference Include="NewLife.Core, Version=8.7.7456.18647, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\NewLife.Core.8.7.2020.601\lib\net45\NewLife.Core.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
     <Reference Include="System.Core" />
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Management" />
     <Reference Include="System.Net.Http" />
+    <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.ServiceProcess" />
     <Reference Include="System.Web.Helpers, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.AspNet.WebPages.3.2.6\lib\net45\System.Web.Helpers.dll</HintPath>
@@ -93,13 +84,30 @@
     <Reference Include="System.Xml" />
     <Reference Include="System.Configuration" />
     <Reference Include="System.Web.Services" />
-    <Reference Include="XCode, Version=9.12.7126.42295, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\NewLife.XCode.9.13.2019.706\lib\net45\XCode.dll</HintPath>
+    <Reference Include="XCode, Version=9.17.7456.18658, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\NewLife.XCode.9.17.2020.601\lib\net45\XCode.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\NewLife.CubeNC\Charts\ChartTitle.cs">
+      <Link>Charts\ChartTitle.cs</Link>
+    </Compile>
+    <Compile Include="..\NewLife.CubeNC\Charts\ECharts.cs">
+      <Link>Charts\ECharts.cs</Link>
+    </Compile>
+    <Compile Include="..\NewLife.CubeNC\Charts\Series.cs">
+      <Link>Charts\Series.cs</Link>
+    </Compile>
+    <Compile Include="..\NewLife.CubeNC\Charts\SeriesTypes.cs">
+      <Link>Charts\SeriesTypes.cs</Link>
+    </Compile>
+    <Compile Include="..\NewLife.CubeNC\Charts\TextStyle.cs">
+      <Link>Charts\TextStyle.cs</Link>
+    </Compile>
     <Compile Include="App_Start\ODataConfig.cs" />
     <Compile Include="Areas\Admin\AdminAreaRegistration.cs" />
+    <Compile Include="Areas\Admin\Controllers\AttachmentController.cs" />
+    <Compile Include="Areas\Admin\Controllers\AreaController.cs" />
     <Compile Include="Areas\Admin\Controllers\ParameterController.cs" />
     <Compile Include="Areas\Admin\Controllers\DepartmentController.cs" />
     <Compile Include="Areas\Admin\Controllers\AppLogController.cs" />
@@ -107,6 +115,7 @@
     <Compile Include="Areas\Admin\Controllers\FileController.cs" />
     <Compile Include="Areas\Admin\Controllers\AppController.cs" />
     <Compile Include="Areas\Admin\Controllers\UserConnectController.cs" />
+    <Compile Include="Areas\Admin\Controllers\UserTokenController.cs" />
     <Compile Include="Areas\Admin\Controllers\VisitStatController.cs" />
     <Compile Include="Areas\Admin\Controllers\RoleController.cs" />
     <Compile Include="Areas\Admin\Controllers\LogController.cs" />
@@ -130,13 +139,18 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>_List_Data.cshtml</DependentUpon>
     </Compile>
-    <Compile Include="Areas\Admin\Views\Db\Index.generated.cs">
-      <DependentUpon>Index.cshtml</DependentUpon>
+    <Compile Include="Areas\Admin\Views\Area\_List_Data.generated.cs">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>
+      <DependentUpon>_List_Data.cshtml</DependentUpon>
     </Compile>
-    <Compile Include="Areas\Admin\Views\Department\_List_Data_Item.generated.cs">
-      <DependentUpon>_List_Data_Item.cshtml</DependentUpon>
+    <Compile Include="Areas\Admin\Views\Area\_List_Search.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_List_Search.cshtml</DependentUpon>
+    </Compile>
+    <Compile Include="Areas\Admin\Views\Db\Index.generated.cs">
+      <DependentUpon>Index.cshtml</DependentUpon>
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>
     </Compile>
@@ -235,10 +249,25 @@
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>
     </Compile>
+    <Compile Include="Areas\Admin\Views\UserConnect\_List_Search.generated.cs">
+      <DependentUpon>_List_Search.cshtml</DependentUpon>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+    </Compile>
     <Compile Include="Areas\Admin\Views\UserOnline\_List_Data.generated.cs">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>
       <DependentUpon>_List_Data.cshtml</DependentUpon>
+    </Compile>
+    <Compile Include="Areas\Admin\Views\UserToken\_List_Data.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_List_Data.cshtml</DependentUpon>
+    </Compile>
+    <Compile Include="Areas\Admin\Views\UserToken\_List_Search.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_List_Search.cshtml</DependentUpon>
     </Compile>
     <Compile Include="Areas\Admin\Views\User\Login.generated.cs">
       <AutoGen>True</AutoGen>
@@ -306,7 +335,7 @@
       <DependentUpon>_ViewStart.cshtml</DependentUpon>
     </Compile>
     <Compile Include="Common\AreaAttribute.cs" />
-    <Compile Include="Common\ControllerHelper.cs" />
+    <Compile Include="Common\DataPermissionAttribute.cs" />
     <Compile Include="Common\ReadOnlyEntityController.cs" />
     <Compile Include="Common\PagerModelBinder.cs" />
     <Compile Include="Common\EntityTreeController.cs" />
@@ -328,6 +357,7 @@
     <Compile Include="Common\RequireSslAttribute.cs" />
     <Compile Include="Common\ViewHelper.cs" />
     <Compile Include="Common\EntityAuthorizeAttribute.cs" />
+    <Compile Include="Controllers\CubeController.cs" />
     <Compile Include="Controllers\HomeController.cs" />
     <Compile Include="Controllers\ODataController.cs" />
     <Compile Include="Controllers\SsoController.cs" />
@@ -335,11 +365,17 @@
     <Compile Include="Entity\应用日志.cs" />
     <Compile Include="Entity\应用系统.Biz.cs" />
     <Compile Include="Entity\应用系统.cs" />
+    <Compile Include="Entity\用户令牌.Biz.cs" />
+    <Compile Include="Entity\用户令牌.cs" />
     <Compile Include="Entity\用户链接.Biz.cs" />
     <Compile Include="Entity\用户链接.cs" />
+    <Compile Include="Entity\附件.Biz.cs" />
+    <Compile Include="Entity\附件.cs" />
     <Compile Include="Extensions\ManageProvider.cs" />
     <Compile Include="Extensions\Pager.cs" />
     <Compile Include="Extensions\PagerHelper.cs" />
+    <Compile Include="Extensions\ItemsExtend.cs" />
+    <Compile Include="Extensions\SessionExtend.cs" />
     <Compile Include="Extensions\WebHelper.cs" />
     <Compile Include="Global.asax.cs">
       <DependentUpon>Global.asax</DependentUpon>
@@ -369,6 +405,46 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Index.cshtml</DependentUpon>
     </Compile>
+    <Compile Include="Views\Shared\_Ace2_Layout.generated.cs">
+      <DependentUpon>_Ace2_Layout.cshtml</DependentUpon>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+    </Compile>
+    <Compile Include="Views\Shared\_Layout_Nav.generated.cs">
+      <DependentUpon>_Layout_Nav.cshtml</DependentUpon>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+    </Compile>
+    <Compile Include="Views\Shared\_Footer.generated.cs">
+      <DependentUpon>_Footer.cshtml</DependentUpon>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+    </Compile>
+    <Compile Include="Views\Shared\_Area1.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_Area1.cshtml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Shared\_Area2.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_Area2.cshtml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Shared\_Area3.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_Area3.cshtml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Shared\_ECharts.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_ECharts.cshtml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Shared\_Enable.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_Enable.cshtml</DependentUpon>
+    </Compile>
     <Compile Include="Views\Shared\_Form_Body.generated.cs">
       <DependentUpon>_Form_Body.cshtml</DependentUpon>
       <AutoGen>True</AutoGen>
@@ -379,6 +455,11 @@
       <DesignTime>True</DesignTime>
       <AutoGen>True</AutoGen>
     </Compile>
+    <Compile Include="Views\Shared\_Bootstrap_Layout.generated.cs">
+      <DependentUpon>_Bootstrap_Layout.cshtml</DependentUpon>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+    </Compile>
     <Compile Include="Views\Shared\_List_Data_Stat.generated.cs">
       <DependentUpon>_List_Data_Stat.cshtml</DependentUpon>
       <AutoGen>True</AutoGen>
@@ -388,6 +469,16 @@
       <DependentUpon>_Object_Nav.cshtml</DependentUpon>
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>
+    </Compile>
+    <Compile Include="Views\Shared\_SelectDepartment.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_SelectDepartment.cshtml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Shared\_SelectUser.generated.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>_SelectUser.cshtml</DependentUpon>
     </Compile>
     <Compile Include="Views\Shared\_StatLevel.generated.cs">
       <DependentUpon>_StatLevel.cshtml</DependentUpon>
@@ -534,8 +625,18 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>_ViewStart.cshtml</DependentUpon>
     </Compile>
+    <Compile Include="Web\AttachmentProvider.cs" />
+    <Compile Include="Web\OAuthClient.cs" />
+    <Compile Include="Web\OAuthConfig.cs" />
     <Compile Include="Web\OAuthHelper.cs" />
+    <Compile Include="Web\OAuthServer.cs" />
     <Compile Include="Web\OAuthServer2.cs" />
+    <Compile Include="Web\OAuth\DingTalkClient.cs" />
+    <Compile Include="Web\OAuth\BaiduClient.cs" />
+    <Compile Include="Web\OAuth\GithubClient.cs" />
+    <Compile Include="Web\OAuth\QQClient.cs" />
+    <Compile Include="Web\OAuth\TaobaoClient.cs" />
+    <Compile Include="Web\OAuth\WeixinClient.cs" />
     <Compile Include="Web\SsoProvider.cs" />
     <Compile Include="Web\WebHelper2.cs" />
   </ItemGroup>
@@ -548,13 +649,17 @@
       <Generator>RazorGenerator</Generator>
       <LastGenOutput>_List_Data.generated.cs</LastGenOutput>
     </None>
+    <None Include="Areas\Admin\Views\Area\_List_Data.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_List_Data.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Areas\Admin\Views\Area\_List_Search.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_List_Search.generated.cs</LastGenOutput>
+    </None>
     <None Include="Areas\Admin\Views\Db\Index.cshtml">
       <Generator>RazorGenerator</Generator>
       <LastGenOutput>Index.generated.cs</LastGenOutput>
-    </None>
-    <None Include="Areas\Admin\Views\Department\_List_Data_Item.cshtml">
-      <Generator>RazorGenerator</Generator>
-      <LastGenOutput>_List_Data_Item.generated.cs</LastGenOutput>
     </None>
     <None Include="Areas\Admin\Views\Role\_List_Data.cshtml">
       <Generator>RazorGenerator</Generator>
@@ -572,9 +677,21 @@
       <Generator>RazorGenerator</Generator>
       <LastGenOutput>_List_Search.generated.cs</LastGenOutput>
     </None>
+    <None Include="Areas\Admin\Views\UserConnect\_List_Search.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_List_Search.generated.cs</LastGenOutput>
+    </None>
     <None Include="Areas\Admin\Views\UserOnline\_List_Data.cshtml">
       <Generator>RazorGenerator</Generator>
       <LastGenOutput>_List_Data.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Areas\Admin\Views\UserToken\_List_Data.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_List_Data.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Areas\Admin\Views\UserToken\_List_Search.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_List_Search.generated.cs</LastGenOutput>
     </None>
     <None Include="Areas\Admin\Views\User\_List_Data.cshtml">
       <Generator>RazorGenerator</Generator>
@@ -620,65 +737,29 @@
       <Generator>RazorGenerator</Generator>
       <LastGenOutput>_Login_Login3.generated.cs</LastGenOutput>
     </None>
-    <None Include="Content\jweui\css\demos.css" />
-    <None Include="Content\jweui\css\jquery-weui.css" />
-    <None Include="Content\jweui\css\jquery-weui.min.css" />
-    <None Include="Content\jweui\images\icon_nav_actionSheet.png" />
-    <None Include="Content\jweui\images\icon_nav_article.png" />
-    <None Include="Content\jweui\images\icon_nav_button.png" />
-    <None Include="Content\jweui\images\icon_nav_calendar.png" />
-    <None Include="Content\jweui\images\icon_nav_cell.png" />
-    <None Include="Content\jweui\images\icon_nav_city.png" />
-    <None Include="Content\jweui\images\icon_nav_datetime.png" />
-    <None Include="Content\jweui\images\icon_nav_dialog.png" />
-    <None Include="Content\jweui\images\icon_nav_icons.png" />
-    <None Include="Content\jweui\images\icon_nav_msg.png" />
-    <None Include="Content\jweui\images\icon_nav_new.png" />
-    <None Include="Content\jweui\images\icon_nav_noti.png" />
-    <None Include="Content\jweui\images\icon_nav_panel.png" />
-    <None Include="Content\jweui\images\icon_nav_photo.png" />
-    <None Include="Content\jweui\images\icon_nav_picker.png" />
-    <None Include="Content\jweui\images\icon_nav_progress.png" />
-    <None Include="Content\jweui\images\icon_nav_ptr.png" />
-    <None Include="Content\jweui\images\icon_nav_search_bar.png" />
-    <None Include="Content\jweui\images\icon_nav_select.png" />
-    <None Include="Content\jweui\images\icon_nav_swiper.png" />
-    <None Include="Content\jweui\images\icon_nav_tab.png" />
-    <None Include="Content\jweui\images\icon_nav_toast.png" />
-    <None Include="Content\jweui\images\icon_nav_up.png" />
-    <None Include="Content\jweui\images\pic_160.png" />
-    <None Include="Content\jweui\images\pic_article.png" />
-    <None Include="Content\jweui\images\present.png" />
-    <None Include="Content\jweui\images\swiper-1.jpg" />
-    <None Include="Content\jweui\images\swiper-2.jpg" />
-    <None Include="Content\jweui\images\swiper-3.jpg" />
-    <None Include="Content\jweui\images\swiper-4.jpg" />
-    <None Include="Content\jweui\images\vcode.jpg" />
-    <None Include="Content\jweui\js\city-picker.js" />
-    <None Include="Content\jweui\js\city-picker.min.js" />
-    <None Include="Content\jweui\js\jquery-weui.js" />
-    <None Include="Content\jweui\js\jquery-weui.min.js" />
-    <None Include="Content\jweui\js\swiper.js" />
-    <None Include="Content\jweui\js\swiper.min.js" />
-    <None Include="Content\jweui\lib\fastclick.js" />
-    <None Include="Content\jweui\lib\jquery-2.1.4.js" />
-    <None Include="Content\jweui\lib\weui.css" />
-    <None Include="Content\jweui\lib\weui.min.css" />
-    <None Include="Content\jweui\lib\zepto.js" />
-    <Content Include="Content\images\logo\alipay.png" />
-    <Content Include="Content\images\logo\Baidu.png" />
-    <Content Include="Content\images\logo\github.png" />
-    <Content Include="Content\images\logo\qq.png" />
-    <Content Include="Content\images\logo\Taobao.png" />
-    <Content Include="Content\images\logo\Weibo.png" />
-    <Content Include="Content\images\logo\Weixin.png" />
-    <Content Include="Entity\XCoder.log">
-      <AutoGen>True</AutoGen>
-      <DesignTime>True</DesignTime>
-      <DependentUpon>XCoder.tt</DependentUpon>
-    </Content>
+    <None Include="Content\ace\ace.min-2.1.1.css" />
+    <None Include="Content\ace\ace.min-2.1.1.js" />
+    <None Include="Content\awesome\brands.min-5.12.1.css" />
+    <None Include="Content\awesome\regular.min-5.12.1.css" />
+    <None Include="Content\awesome\solid.min-5.12.1.css" />
+    <None Include="Content\bootstrap-suggest.js" />
+    <None Include="Content\bootstrap\bootstrap.bundle.min-4.4.1.js" />
+    <None Include="Content\bootstrap\bootstrap.min-4.4.1.css" />
+    <None Include="Content\bootstrap\bootstrap.min-4.4.1.js" />
+    <None Include="Content\bootstrap\css\bootstrap-theme.css" />
+    <None Include="Content\awesome\font-awesome.min-5.12.1.css" />
+    <None Include="Content\bootstrap\popper.min-2.0.6.js" />
+    <None Include="Content\Cube-bootstrap.css" />
+    <None Include="Content\echarts.min.js" />
+    <None Include="Content\images\logo\alipay.png" />
+    <None Include="Content\images\logo\Baidu.png" />
+    <None Include="Content\images\logo\github.png" />
+    <None Include="Content\images\logo\NewLife.png" />
+    <None Include="Content\images\logo\qq.png" />
+    <None Include="Content\images\logo\Taobao.png" />
+    <None Include="Content\images\logo\Weibo.png" />
+    <None Include="Content\images\logo\Weixin.png" />
     <None Include="index.html" />
-    <None Include="Content\bootstrap\js\bootstrap.js" />
     <None Include="Entity\Cube.xml">
       <SubType>Designer</SubType>
     </None>
@@ -830,9 +911,45 @@
       <Generator>RazorGenerator</Generator>
       <LastGenOutput>Index.generated.cs</LastGenOutput>
     </None>
+    <None Include="Views\Shared\_Layout_Nav.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_Layout_Nav.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_Ace2_Layout.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_Ace2_Layout.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_Footer.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_Footer.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_ECharts.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_ECharts.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_Enable.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_Enable.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_Area1.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_Area1.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_Area2.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_Area2.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_Area3.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_Area3.generated.cs</LastGenOutput>
+    </None>
     <None Include="Views\Shared\_Form_Group.cshtml">
       <Generator>RazorGenerator</Generator>
       <LastGenOutput>_Form_Group.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_Bootstrap_Layout.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_Bootstrap_Layout.generated.cs</LastGenOutput>
     </None>
     <None Include="Views\Shared\_List_Data_Stat.cshtml">
       <Generator>RazorGenerator</Generator>
@@ -845,6 +962,14 @@
     <None Include="Views\Shared\_Form_Body.cshtml">
       <Generator>RazorGenerator</Generator>
       <LastGenOutput>_Form_Body.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_SelectDepartment.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_SelectDepartment.generated.cs</LastGenOutput>
+    </None>
+    <None Include="Views\Shared\_SelectUser.cshtml">
+      <Generator>RazorGenerator</Generator>
+      <LastGenOutput>_SelectUser.generated.cs</LastGenOutput>
     </None>
     <None Include="Views\Shared\_StatLevel.cshtml">
       <Generator>RazorGenerator</Generator>
@@ -901,6 +1026,7 @@
     <None Include="Scripts\jquery.validate.unobtrusive.js" />
     <None Include="Scripts\jquery.validate.unobtrusive.min.js" />
     <None Include="Scripts\modernizr-2.6.2.js" />
+    <None Include="Content\js\jquery-3.4.1.min.js" />
     <Content Include="Web.config">
       <SubType>Designer</SubType>
     </Content>
@@ -1005,6 +1131,7 @@
       <SubType>Designer</SubType>
     </None>
   </ItemGroup>
+  <ItemGroup />
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v12.0</VSToolsPath>

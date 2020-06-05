@@ -4,11 +4,10 @@
 @using XCode;
 @using XCode.Configuration;
 @{
-    var fact = ViewBag.Factory as IEntityOperate;
+    var fact = ViewBag.Factory as IEntityFactory;
     var page = ViewBag.Page as Pager;
     var fields = ViewBag.Fields as IList<FieldItem>;
-        var set = ViewBag.PageSetting as PageSetting;
-    //var provider = ManageProvider.Provider;
+    var set = ViewBag.PageSetting as PageSetting;
 }
 <table class="table table-bordered table-hover table-striped table-condensed">
     <thead>
@@ -30,7 +29,7 @@
             {
                 <th class="text-center">升</th>
                 <th class="text-center">降</th>
-                <th class="text-center" style="min-width:100px;">操作</th>
+                <th class="text-center">操作</th>
             }
         </tr>
     </thead>

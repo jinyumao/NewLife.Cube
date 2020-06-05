@@ -8,7 +8,7 @@
 @using System.Web.Mvc.Html;
 @using System.Web.Routing;
 @{
-    var fact = ViewBag.Factory as IEntityOperate;
+    var fact = ViewBag.Factory as IEntityFactory;
     var page = ViewBag.Page as Pager;
     var fields = ViewBag.Fields as IList<FieldItem>;
     var set = ViewBag.PageSetting as PageSetting;
@@ -33,7 +33,7 @@
             {
                 <th class="text-center">升</th>
                 <th class="text-center">降</th>
-                <th class="text-center" style="min-width:100px;">操作</th>
+                <th class="text-center">操作</th>
             }
         </tr>
     </thead>

@@ -60,7 +60,7 @@ namespace NewLife.Cube
         static List<Assembly> FindAllArea()
         {
             var list = new List<Assembly>();
-            Areas = typeof(AreaBase).GetAllSubclasses(false).ToArray();
+            Areas = typeof(AreaBase).GetAllSubclasses().ToArray();
             foreach (var item in Areas)
             {
                 var asm = item.Assembly;
@@ -91,30 +91,26 @@ namespace NewLife.Cube
         {
             // 释放ico图标
             var ico = "favicon.ico";
-            var ico2 = ("wwwroot/" + ico).GetFullPath();
+            var wwwroot = Setting.Current.WebRootPath;
+            var ico2 = wwwroot.CombinePath(ico).GetFullPath();
             if (!File.Exists(ico2))
             {
-                // 延迟时间释放，给子系统覆盖的机会
-                TimerX.Delay(s =>
+                var asm = Assembly.GetExecutingAssembly();
+                var ns = asm.GetManifestResourceNames();
+                var f = ns.FirstOrDefault(e => e.EndsWithIgnoreCase(ico));
+                if (!f.IsNullOrEmpty())
                 {
-                    if (!File.Exists(ico2))
-                    {
-                        //Assembly.GetExecutingAssembly().ReleaseFile(ico, ico2);
-                        var asm = Assembly.GetExecutingAssembly();
-                        var ns = asm.GetManifestResourceNames();
-                        var f = ns.FirstOrDefault(e => e.EndsWithIgnoreCase(ico));
-                        if (!f.IsNullOrEmpty())
-                        {
-                            var ms = asm.GetManifestResourceStream(f);
-                            File.WriteAllBytes(ico2, ms.ReadBytes());
-                        }
-                    }
-                }, 1000);
+                    XTrace.WriteLine("释放图标{0}到{1}", f, ico2);
+
+                    var ms = asm.GetManifestResourceStream(f);
+                    File.WriteAllBytes(ico2.EnsureDirectory(true), ms.ReadBytes());
+                }
             }
 
             // 检查魔方样式
-            var js = "wwwroot/Content/Cube.js".GetFullPath();
-            var css = "wwwroot/Content/Cube.css".GetFullPath();
+            var content = Setting.Current.WebRootPath.CombinePath("Content");
+            var js = content.CombinePath("Cube.js").GetFullPath();
+            var css = content.CombinePath("Cube.css").GetFullPath();
             if (File.Exists(js) && File.Exists(css))
             {
                 // 判断脚本时间
@@ -125,17 +121,17 @@ namespace NewLife.Cube
                     if (DateTime.TryParse(ss[i].TrimStart("//").Trim(), out dt)) break;
                 }
                 // 要求脚本最小更新时间
-                if (dt >= "2017-12-07 00:00:00".ToDateTime()) return;
+                if (dt >= "2020-02-04 00:00:00".ToDateTime()) return;
             }
 
             var url = Setting.Current.PluginServer;
             if (url.IsNullOrEmpty()) return;
 
-            var wc = new WebClientX(true, true)
+            var wc = new WebClientX()
             {
                 Log = XTrace.Log
             };
-            wc.DownloadLinkAndExtract(url, "Cube_Content", "wwwroot/Content".GetFullPath(), true);
+            wc.DownloadLinkAndExtract(url, "Cube_Content", content, true);
         }
 
         /// <summary>注册区域，每个继承此区域特性的类的静态构造函数都调用此方法，以进行相关注册</summary>
@@ -173,7 +169,7 @@ namespace NewLife.Cube
             var mf = ManageProvider.Menu;
             if (mf == null) return;
 
-            using (var tran = (mf as IEntityOperate).CreateTrans())
+            using (var tran = (mf as IEntityFactory).CreateTrans())
             {
                 XTrace.WriteLine("初始化[{0}]的菜单体系", areaName);
                 mf.ScanController(areaName, areaType.Assembly, areaType.Namespace + ".Controllers");
@@ -188,7 +184,7 @@ namespace NewLife.Cube
                     if (!dis.IsNullOrEmpty()) menu.DisplayName = dis;
                     if (!des.IsNullOrEmpty()) menu.Remark = des;
 
-                    (menu as IEntity).Save();
+                    (menu as IEntity).Update();
                 }
 
                 tran.Commit();
