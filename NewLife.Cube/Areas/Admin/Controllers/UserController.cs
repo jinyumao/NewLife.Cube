@@ -149,6 +149,11 @@ namespace NewLife.Cube.Admin.Controllers
                 var provider = ManageProvider.Provider;
                 if (ModelState.IsValid && provider.Login(username, password, remember ?? false) != null)
                 {
+                    if (IsJsonRequest)
+                    {
+                        return Json(0, "ok", new { provider.Current.ID });
+                    }
+
                     //FormsAuthentication.SetAuthCookie(username, remember ?? false);
 
                     if (Url.IsLocalUrl(returnUrl)) return Redirect(returnUrl);
@@ -164,6 +169,11 @@ namespace NewLife.Cube.Admin.Controllers
             }
             catch (Exception ex)
             {
+                if (IsJsonRequest)
+                {
+                    return Json(500, ex.Message);
+                }
+
                 ModelState.AddModelError("", ex.Message);
             }
 
@@ -202,7 +212,7 @@ namespace NewLife.Cube.Admin.Controllers
         }
         #endregion
 
-        /// <summary>用户资料</summary>
+        /// <summary>获取用户资料</summary>
         /// <param name="id"></param>
         /// <returns></returns>
         [AllowAnonymous]
@@ -229,10 +239,10 @@ namespace NewLife.Cube.Admin.Controllers
             var ucs = UserConnect.FindAllByUserID(user.ID);
             ViewBag.Binds = ucs;
 
-            return View(user);
+            return IsJsonRequest ? Json(0, "ok", user) : View(user);
         }
 
-        /// <summary>用户资料</summary>
+        /// <summary>更新用户资料</summary>
         /// <param name="user"></param>
         /// <returns></returns>
         [HttpPost]

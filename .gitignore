@@ -23,4 +23,14 @@ bld/
 /NewLife.Cube/Config
 /NewLife.Cube/Plugins
 /NewLife.CubeNC/Properties/launchSettings.json
+/CubeDemo/Entity
+/NewLife.Cube/Entity
+/CubeDemoNC/wwwroot/Content
+/NewLife.CubeBlazor
+/NewLife.CubeBlazor1
+/NewLife.Cube.VueUI/node_modules
+/NewLife.Cube.VueUI
 *.pubxml
+/.vscode
+/CubeDemo/Config
+/XTemp
